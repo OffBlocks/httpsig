@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,7 +32,7 @@ type verHolder struct {
 }
 
 type verifier struct {
-	keys     map[string]verHolder
+	keys     sync.Map // map[string]verHolder
 	resolver VerifyingKeyResolver
 
 	// For testing
@@ -164,8 +165,8 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 }
 
 func (v *verifier) ResolveKey(keyID string) (verHolder, bool) {
-	if holder, ok := v.keys[keyID]; ok {
-		return holder, true
+	if holder, ok := v.keys.Load(keyID); ok {
+		return holder.(verHolder), true
 	}
 
 	if v.resolver != nil {
@@ -182,7 +183,7 @@ func (v *verifier) ResolveKey(keyID string) (verHolder, bool) {
 					}
 				},
 			}
-			v.keys[keyID] = holder
+			v.keys.Store(keyID, holder)
 			return holder, true
 		}
 	}

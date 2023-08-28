@@ -85,12 +85,9 @@ func TestVerify_B_2_1(t *testing.T) {
 	pk := pki.(*rsa.PublicKey)
 
 	v := &verifier{
-		keys: map[string]verHolder{
-			"test-key-rsa-pss": verifyRsaPssSha512(pk),
-		},
-
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=();created=1618884475;keyid="test-key-rsa-pss";alg="rsa-pss-sha512"`)
@@ -117,12 +114,9 @@ func TestVerify_B_2_2(t *testing.T) {
 	pk := pki.(*rsa.PublicKey)
 
 	v := &verifier{
-		keys: map[string]verHolder{
-			"test-key-rsa-pss": verifyRsaPssSha512(pk),
-		},
-
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=("@authority" content-type");created=1618884475;keyid="test-key-rsa-pss"`)
@@ -150,12 +144,9 @@ func TestVerify_B_2_3(t *testing.T) {
 	pk := pki.(*rsa.PublicKey)
 
 	v := &verifier{
-		keys: map[string]verHolder{
-			"test-key-rsa-pss": verifyRsaPssSha512(pk),
-		},
-
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=("date" "@method" "@path" "@query" "@authority" "content-type" "digest" "content-length");created=1618884475;keyid="test-key-rsa-pss"`)
@@ -204,12 +195,9 @@ func TestVerify_B_2_5(t *testing.T) {
 	}
 
 	v := &verifier{
-		keys: map[string]verHolder{
-			"test-shared-secret": verifyHmacSha256(k),
-		},
-
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
+	v.keys.Store("test-shared-secret", verifyHmacSha256(k))
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=("@authority" "date" "content-type");created=1618884475;keyid="test-shared-secret"`)

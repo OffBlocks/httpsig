@@ -96,12 +96,11 @@ type VerifyingKeyResolver interface {
 }
 
 type Verifier struct {
-	verifier
+	*verifier
 }
 
 func NewVerifier(opts ...verifyOption) *Verifier {
 	v := verifier{
-		keys:    make(map[string]verHolder),
 		nowFunc: time.Now,
 	}
 
@@ -109,7 +108,7 @@ func NewVerifier(opts ...verifyOption) *Verifier {
 		o.configureVerify(&v)
 	}
 
-	return &Verifier{v}
+	return &Verifier{&v}
 }
 
 func (v *Verifier) Verify(r *http.Request) (keyID string, err error) {
@@ -246,7 +245,7 @@ func WithSignRsaPssSha512(keyID string, pk *rsa.PrivateKey) signOption {
 // given public key using the given key id.
 func WithVerifyRsaPssSha512(keyID string, pk *rsa.PublicKey) verifyOption {
 	return &optImpl{
-		v: func(v *verifier) { v.keys[keyID] = verifyRsaPssSha512(pk) },
+		v: func(v *verifier) { v.keys.Store(keyID, verifyRsaPssSha512(pk)) },
 	}
 }
 
@@ -262,7 +261,7 @@ func WithSignEcdsaP256Sha256(keyID string, pk *ecdsa.PrivateKey) signOption {
 // given public key using the given key id.
 func WithVerifyEcdsaP256Sha256(keyID string, pk *ecdsa.PublicKey) verifyOption {
 	return &optImpl{
-		v: func(v *verifier) { v.keys[keyID] = verifyEccP256(pk) },
+		v: func(v *verifier) { v.keys.Store(keyID, verifyEccP256(pk)) },
 	}
 }
 
@@ -271,6 +270,6 @@ func WithVerifyEcdsaP256Sha256(keyID string, pk *ecdsa.PublicKey) verifyOption {
 func WithHmacSha256(keyID string, secret []byte) signOrVerifyOption {
 	return &optImpl{
 		s: func(s *signer) { s.keys[keyID] = signHmacSha256(secret) },
-		v: func(v *verifier) { v.keys[keyID] = verifyHmacSha256(secret) },
+		v: func(v *verifier) { v.keys.Store(keyID, verifyHmacSha256(secret)) },
 	}
 }
