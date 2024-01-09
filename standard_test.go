@@ -73,7 +73,7 @@ func TestSign_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+	s.keys.Store("test-key-rsa-pss", &RsaPssSha512SigningKey{pk})
 
 	hdr, err := s.Sign(testReq())
 	if err != nil {
@@ -103,7 +103,7 @@ func TestVerify_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
+	v.keys.Store("test-key-rsa-pss", &RsaPssSha512VerifyingKey{pk})
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=();created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd"`)
@@ -142,7 +142,7 @@ func TestRoundtrip_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+	s.keys.Store("test-key-rsa-pss", &RsaPssSha512SigningKey{pk})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -165,7 +165,7 @@ func TestRoundtrip_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pubk))
+	v.keys.Store("test-key-rsa-pss", &RsaPssSha512VerifyingKey{pubk})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])
@@ -205,7 +205,7 @@ func TestSign_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+	s.keys.Store("test-key-rsa-pss", &RsaPssSha512SigningKey{pk})
 
 	hdr, err := s.Sign(testReq())
 	if err != nil {
@@ -235,7 +235,7 @@ func TestVerify_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
 	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
+	v.keys.Store("test-key-rsa-pss", &RsaPssSha512VerifyingKey{pk})
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=("@authority" "content-digest");created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd";alg="rsa-pss-sha512"`)
@@ -276,7 +276,7 @@ func TestRoundtrip_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+	s.keys.Store("test-key-rsa-pss", &RsaPssSha512SigningKey{pk})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -299,7 +299,7 @@ func TestRoundtrip_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
 	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pkpub))
+	v.keys.Store("test-key-rsa-pss", &RsaPssSha512VerifyingKey{pkpub})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])
@@ -325,7 +325,7 @@ func TestRoundtrip_ECDSA_P256_SHA256(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-ecc-p256", signEccP256(pk))
+	s.keys.Store("test-key-ecc-p256", &EcdsaP256SigningKey{pk})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -348,7 +348,7 @@ func TestRoundtrip_ECDSA_P256_SHA256(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
 	}
-	v.keys.Store("test-key-ecc-p256", verifyEccP256(pkpub))
+	v.keys.Store("test-key-ecc-p256", &EcdsaP256VerifyingKey{pkpub})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])
@@ -374,7 +374,7 @@ func TestRoundtrip_ECDSA_P384_SHA384(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-ecc-p384", signEccP384(pk))
+	s.keys.Store("test-key-ecc-p384", &EcdsaP384SigningKey{pk})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -397,7 +397,7 @@ func TestRoundtrip_ECDSA_P384_SHA384(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
 	}
-	v.keys.Store("test-key-ecc-p384", verifyEccP384(pkpub))
+	v.keys.Store("test-key-ecc-p384", &EcdsaP384VerifyingKey{pkpub})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])
@@ -425,7 +425,7 @@ func TestRoundtrip_ED25519(t *testing.T) {
 	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
 	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-	s.keys.Store("test-key-ed25519", signEd25519(&pk))
+	s.keys.Store("test-key-ed25519", &Ed25519SigningKey{pk})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -448,7 +448,7 @@ func TestRoundtrip_ED25519(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
 	}
-	v.keys.Store("test-key-ed25519", verifyEd25519(&pkpub))
+	v.keys.Store("test-key-ed25519", &Ed25519VerifyingKey{pkpub})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])
@@ -470,7 +470,7 @@ func TestSign_HMAC_SHA_256_B_2_5(t *testing.T) {
 	}
 	withCreated(time.Unix(1618884475, 0)).configureSign(&s)
 
-	s.keys.Store("test-shared-secret", signHmacSha256(k))
+	s.keys.Store("test-shared-secret", &HmacSha256SigningKey{Secret: k})
 
 	hdr, err := s.Sign(testReq())
 	if err != nil {
@@ -495,7 +495,7 @@ func TestVerify_HMAC_SHA_256_B_2_5(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
-	v.keys.Store("test-shared-secret", verifyHmacSha256(k))
+	v.keys.Store("test-shared-secret", &HmacSha256VerifyingKey{Secret: k})
 
 	req := testReq()
 	req.Header.Set("Signature-Input", `sig1=("@authority" "date" "content-type");created=1618884475;keyid="test-shared-secret"`)
@@ -518,7 +518,7 @@ func TestRoundtrip_HMAC_SHA_256_B_2_5(t *testing.T) {
 	}
 	withCreated(time.Unix(1618884475, 0)).configureSign(&s)
 
-	s.keys.Store("test-shared-secret", signHmacSha256(k))
+	s.keys.Store("test-shared-secret", &HmacSha256SigningKey{Secret: k})
 
 	req := testReq()
 	hdr, err := s.Sign(req)
@@ -529,7 +529,7 @@ func TestRoundtrip_HMAC_SHA_256_B_2_5(t *testing.T) {
 	v := &verifier{
 		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
 	}
-	v.keys.Store("test-shared-secret", verifyHmacSha256(k))
+	v.keys.Store("test-shared-secret", &HmacSha256VerifyingKey{Secret: k})
 
 	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
 	req.Header.Set("Signature", hdr["Signature"][0])

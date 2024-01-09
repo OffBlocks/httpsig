@@ -16,21 +16,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
 )
-
-type verImpl struct {
-	w      io.Writer
-	verify func([]byte) error
-}
-
-type verHolder struct {
-	alg      string
-	verifier func() verImpl
-}
 
 type verifier struct {
 	keys     sync.Map
@@ -75,7 +64,7 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 			return "", errMalformedSignature
 		}
 
-		if _, ok := v.ResolveKey(candidate.keyID); ok {
+		if _, err := v.ResolveKey(candidate.keyID, candidate.alg); err == nil {
 			sigID = pParts[0]
 			params = candidate
 			paramsRaw = pParts[1]
@@ -105,8 +94,12 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 		return params.keyID, errMalformedSignature
 	}
 
-	ver, _ := v.ResolveKey(params.keyID)
-	if ver.alg != "" && params.alg != "" && ver.alg != params.alg {
+	ver, err := v.ResolveKey(params.keyID, params.alg)
+	if err != nil {
+		return params.keyID, err
+	}
+
+	if params.alg != "" && ver.Algorithm() != params.alg {
 		return params.keyID, errAlgMismatch
 	}
 
@@ -115,8 +108,6 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 	if err != nil {
 		return params.keyID, errMalformedSignature
 	}
-
-	verifier := ver.verifier()
 
 	//TODO: skip the buffer.
 
@@ -148,11 +139,7 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 	}
 	fmt.Fprintf(&b, "\"@signature-params\": %s", paramsRaw)
 
-	if _, err := verifier.w.Write(b.Bytes()); err != nil {
-		return params.keyID, err
-	}
-
-	err = verifier.verify(sig)
+	err = ver.Verify(b.Bytes(), sig)
 	if err != nil {
 		return params.keyID, errInvalidSignature
 	}
@@ -165,31 +152,21 @@ func (v *verifier) Verify(msg *message) (keyID string, err error) {
 	return params.keyID, nil
 }
 
-func (v *verifier) ResolveKey(keyID string) (verHolder, bool) {
-	if holder, ok := v.keys.Load(keyID); ok {
-		return holder.(verHolder), true
+func (v *verifier) ResolveKey(keyID string, alg Algorithm) (VerifyingKey, error) {
+	if key, ok := v.keys.Load(keyID); ok {
+		return key.(VerifyingKey), nil
 	}
 
 	if v.resolver != nil {
-		key := v.resolver.Resolve(keyID)
-		if key != nil {
-			holder := verHolder{
-				verifier: func() verImpl {
-					in := bytes.NewBuffer(make([]byte, 0, 1024))
-					return verImpl{
-						w: in,
-						verify: func(sig []byte) error {
-							return key.Verify(in.Bytes(), sig)
-						},
-					}
-				},
-			}
-			v.keys.Store(keyID, holder)
-			return holder, true
+		key, err := v.resolver.Resolve(keyID, alg)
+		if err != nil {
+			return nil, err
 		}
+		v.keys.Store(keyID, key)
+		return key, nil
 	}
 
-	return verHolder{}, false
+	return nil, errUnknownKey
 }
 
 // XXX use vice here too.
@@ -216,123 +193,125 @@ func IsInvalidSignatureError(err error) bool   { return errors.Is(err, invalidSi
 
 */
 
-func verifyRsaPssSha512(pk *rsa.PublicKey) verHolder {
-	return verHolder{
-		alg: "rsa-pss-sha512",
-		verifier: func() verImpl {
-			h := sha512.New()
-
-			return verImpl{
-				w: h,
-				verify: func(s []byte) error {
-					b := h.Sum(nil)
-
-					return rsa.VerifyPSS(pk, crypto.SHA512, b, s, nil)
-				},
-			}
-		},
-	}
+type RsaPssSha512VerifyingKey struct {
+	*rsa.PublicKey
 }
 
-func verifyRsaPkcs1v15Sha256(pk *rsa.PublicKey) verHolder {
-	return verHolder{
-		alg: "rsa-v1_5-sha256",
-		verifier: func() verImpl {
-			h := sha256.New()
-
-			return verImpl{
-				w: h,
-				verify: func(s []byte) error {
-					b := h.Sum(nil)
-
-					return rsa.VerifyPKCS1v15(pk, crypto.SHA512, b, s)
-				},
-			}
-		},
+func (k *RsaPssSha512VerifyingKey) Verify(data []byte, signature []byte) error {
+	hash := sha512.New()
+	_, err := hash.Write(data)
+	if err != nil {
+		return err
 	}
+
+	bytes := hash.Sum(nil)
+
+	return rsa.VerifyPSS(k.PublicKey, crypto.SHA512, bytes, signature, nil)
 }
 
-func verifyEccP256(pk *ecdsa.PublicKey) verHolder {
-	return verHolder{
-		alg: "ecdsa-p256-sha256",
-		verifier: func() verImpl {
-			h := sha256.New()
-
-			return verImpl{
-				w: h,
-				verify: func(s []byte) error {
-					b := h.Sum(nil)
-
-					if !ecdsa.VerifyASN1(pk, b, s) {
-						return errInvalidSignature
-					}
-
-					return nil
-				},
-			}
-		},
-	}
+func (k *RsaPssSha512VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmRsaPssSha512
 }
 
-func verifyEccP384(pk *ecdsa.PublicKey) verHolder {
-	return verHolder{
-		alg: "ecdsa-p384-sha384",
-		verifier: func() verImpl {
-			h := sha512.New384()
-
-			return verImpl{
-				w: h,
-				verify: func(s []byte) error {
-					b := h.Sum(nil)
-
-					if !ecdsa.VerifyASN1(pk, b, s) {
-						return errInvalidSignature
-					}
-
-					return nil
-				},
-			}
-		},
-	}
+type RsaPkcs1v15Sha256VerifyingKey struct {
+	*rsa.PublicKey
 }
 
-func verifyEd25519(pk *ed25519.PublicKey) verHolder {
-	return verHolder{
-		alg: "ed25519",
-		verifier: func() verImpl {
-			var h bytes.Buffer
-
-			return verImpl{
-				w: &h,
-				verify: func(s []byte) error {
-					b := h.Bytes()
-
-					if !ed25519.Verify(*pk, b, s) {
-						return errInvalidSignature
-					}
-
-					return nil
-				},
-			}
-		},
+func (k *RsaPkcs1v15Sha256VerifyingKey) Verify(data []byte, signature []byte) error {
+	hash := sha256.New()
+	_, err := hash.Write(data)
+	if err != nil {
+		return err
 	}
+
+	bytes := hash.Sum(nil)
+
+	return rsa.VerifyPKCS1v15(k.PublicKey, crypto.SHA512, bytes, signature)
 }
 
-func verifyHmacSha256(secret []byte) verHolder {
-	return verHolder{
-		alg: "hmac-sha256",
-		verifier: func() verImpl {
-			h := hmac.New(sha256.New, secret)
+func (k *RsaPkcs1v15Sha256VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmRsaPkcs1v15Sha256
+}
 
-			return verImpl{
-				w: h,
-				verify: func(in []byte) error {
-					if !hmac.Equal(in, h.Sum(nil)) {
-						return errInvalidSignature
-					}
-					return nil
-				},
-			}
-		},
+type EcdsaP256VerifyingKey struct {
+	*ecdsa.PublicKey
+}
+
+func (k *EcdsaP256VerifyingKey) Verify(data []byte, signature []byte) error {
+	hash := sha256.New()
+	_, err := hash.Write(data)
+	if err != nil {
+		return err
 	}
+
+	bytes := hash.Sum(nil)
+
+	if !ecdsa.VerifyASN1(k.PublicKey, bytes, signature) {
+		return errInvalidSignature
+	}
+	return nil
+}
+
+func (k *EcdsaP256VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmEcdsaP256Sha256
+}
+
+type EcdsaP384VerifyingKey struct {
+	*ecdsa.PublicKey
+}
+
+func (k *EcdsaP384VerifyingKey) Verify(data []byte, signature []byte) error {
+	hash := sha512.New384()
+	_, err := hash.Write(data)
+	if err != nil {
+		return err
+	}
+
+	bytes := hash.Sum(nil)
+
+	if !ecdsa.VerifyASN1(k.PublicKey, bytes, signature) {
+		return errInvalidSignature
+	}
+	return nil
+}
+
+func (k *EcdsaP384VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmEcdsaP384Sha384
+}
+
+type Ed25519VerifyingKey struct {
+	ed25519.PublicKey
+}
+
+func (k *Ed25519VerifyingKey) Verify(data []byte, signature []byte) error {
+	if !ed25519.Verify(k.PublicKey, data, signature) {
+		return errInvalidSignature
+	}
+	return nil
+}
+
+func (k *Ed25519VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmEd25519
+}
+
+type HmacSha256VerifyingKey struct {
+	Secret []byte
+}
+
+func (k *HmacSha256VerifyingKey) Verify(data []byte, signature []byte) error {
+	hash := hmac.New(sha256.New, k.Secret)
+	_, err := hash.Write(data)
+	if err != nil {
+		return err
+	}
+
+	bytes := hash.Sum(nil)
+	if !hmac.Equal(bytes, signature) {
+		return errInvalidSignature
+	}
+	return nil
+}
+
+func (k *HmacSha256VerifyingKey) Algorithm() Algorithm {
+	return AlgorithmHmacSha256
 }

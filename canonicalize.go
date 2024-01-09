@@ -96,7 +96,7 @@ func canonicalizeSignatureParams(out io.Writer, sp *signatureParams) error {
 type signatureParams struct {
 	items   []string
 	keyID   string
-	alg     string
+	alg     Algorithm
 	created time.Time
 	expires *time.Time
 	nonce   *string
@@ -168,7 +168,7 @@ func parseSignatureInput(in string) (*signatureParams, error) {
 		// TODO: error when not wrapped in quotes
 		switch paramParts[0] {
 		case "alg":
-			sp.alg = strings.Trim(paramParts[1], `"`)
+			sp.alg = Algorithm(strings.Trim(paramParts[1], `"`))
 		case "keyid":
 			sp.keyID = strings.Trim(paramParts[1], `"`)
 		case "nonce":
