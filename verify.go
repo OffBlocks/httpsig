@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -32,7 +33,7 @@ type verHolder struct {
 }
 
 type verifier struct {
-	keys     sync.Map // map[string]verHolder
+	keys     sync.Map
 	resolver VerifyingKeyResolver
 
 	// For testing
@@ -233,6 +234,24 @@ func verifyRsaPssSha512(pk *rsa.PublicKey) verHolder {
 	}
 }
 
+func verifyRsaPkcs1v15Sha256(pk *rsa.PublicKey) verHolder {
+	return verHolder{
+		alg: "rsa-v1_5-sha256",
+		verifier: func() verImpl {
+			h := sha256.New()
+
+			return verImpl{
+				w: h,
+				verify: func(s []byte) error {
+					b := h.Sum(nil)
+
+					return rsa.VerifyPKCS1v15(pk, crypto.SHA512, b, s)
+				},
+			}
+		},
+	}
+}
+
 func verifyEccP256(pk *ecdsa.PublicKey) verHolder {
 	return verHolder{
 		alg: "ecdsa-p256-sha256",
@@ -245,6 +264,50 @@ func verifyEccP256(pk *ecdsa.PublicKey) verHolder {
 					b := h.Sum(nil)
 
 					if !ecdsa.VerifyASN1(pk, b, s) {
+						return errInvalidSignature
+					}
+
+					return nil
+				},
+			}
+		},
+	}
+}
+
+func verifyEccP384(pk *ecdsa.PublicKey) verHolder {
+	return verHolder{
+		alg: "ecdsa-p384-sha384",
+		verifier: func() verImpl {
+			h := sha512.New384()
+
+			return verImpl{
+				w: h,
+				verify: func(s []byte) error {
+					b := h.Sum(nil)
+
+					if !ecdsa.VerifyASN1(pk, b, s) {
+						return errInvalidSignature
+					}
+
+					return nil
+				},
+			}
+		},
+	}
+}
+
+func verifyEd25519(pk *ed25519.PublicKey) verHolder {
+	return verHolder{
+		alg: "ed25519",
+		verifier: func() verImpl {
+			var h bytes.Buffer
+
+			return verImpl{
+				w: &h,
+				verify: func(s []byte) error {
+					b := h.Bytes()
+
+					if !ed25519.Verify(*pk, b, s) {
 						return errInvalidSignature
 					}
 

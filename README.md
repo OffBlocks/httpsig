@@ -7,12 +7,12 @@
 <p align="center"><i>Standards-based HTTP request signing and verification for <a href="https://golang.org">Go</a></i></p>
 
 <div align="center">
-  <a href="https://pkg.go.dev/github.com/jbowes/httpsig"><img src="https://pkg.go.dev/badge/github.com/jbowes/httpsig.svg" alt="Go Reference"></a>
+  <a href="https://pkg.go.dev/github.com/offblocks/httpsig"><img src="https://pkg.go.dev/badge/github.com/offblocks/httpsig.svg" alt="Go Reference"></a>
   <img alt="Alpha Quality" src="https://img.shields.io/badge/status-ALPHA-orange.svg" >
-  <a href="https://github.com/jbowes/httpsig/actions/workflows/go.yml"><img alt="Build Status" src="https://github.com/jbowes/httpsig/actions/workflows/go.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/offblocks/go-httpsig/actions/workflows/go.yml"><img alt="Build Status" src="https://github.com/offblocks/go-httpsig/actions/workflows/go.yml/badge.svg?branch=main"></a>
   <a href="./LICENSE"><img alt="BSD license" src="https://img.shields.io/badge/license-BSD-blue.svg"></a>
-  <a href="https://codecov.io/gh/jbowes/httpsig"><img alt="codecov" src="https://img.shields.io/codecov/c/github/jbowes/httpsig.svg"></a>
-  <a href="https://goreportcard.com/report/github.com/jbowes/httpsig"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/jbowes/httpsig"></a>
+  <a href="https://codecov.io/gh/offblocks/go-httpsig"><img alt="codecov" src="https://img.shields.io/codecov/c/github/offblocks/go-httpsig.svg"></a>
+  <a href="https://goreportcard.com/report/github.com/offblocks/go-httpsig"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/offblocks/go-httpsig"></a>
 </div><br /><br />
 
 ## Introduction
@@ -106,9 +106,11 @@ computation is based on version `05` of [Digest Headers][dighdr]
 | create multiple signatures      | ✅ |   |                                                                        |
 | verify from multiple signatures | ✅ |   |                                                                        |
 | `rsa-pss-sha512`                | ✅ |   |                                                                        |
-| `rsa-v1_5-sha256`               |   | ❌ |                                                                        |
+| `rsa-v1_5-sha256`               | ✅ |   |                                                                        |
 | `hmac-sha256`                   | ✅ |   |                                                                        |
 | `ecdsa-p256-sha256`             | ✅ |   |                                                                        |
+| `ecdsa-p384-sha384`             | ✅ |   |                                                                        |
+| `ed25519`                       | ✅ |   |                                                                        |
 | custom signature formats        |   | ❌ | `eddsa` is not part of the spec, so custom support here would be nice! |
 | JSON Web Signatures             |   | ❌ | JWS doesn't support any additional algs, but it is part of the spec    |
 | Signature-Input as trailer      |   | ❌ | Trailers can be dropped. accept for verification only.                 |
@@ -117,13 +119,13 @@ computation is based on version `05` of [Digest Headers][dighdr]
 | response digests                |   | ❌ | Tricky to support for signature use according to the spec              |
 | multiple digests                |   | ❌ |                                                                        |
 | digest: `sha-256`               |   | ❌ |                                                                        |
-| digest: `sha-512`               |   | ❌ |                                                                        |
+| digest: `sha-512`               | ✅ | ❌ |                                                                        |
 | digest: `md5`                   |   | ❌ | Deprecated in the spec. Unlikely to be supported.                      |
 | digest: `sha`                   |   | ❌ | Deprecated in the spec. Unlikely to be supported.                      |
 | digest: `unixsum`               |   | ❌ |                                                                        |
 | digest: `unixcksum`             |   | ❌ |                                                                        |
 | digest: `id-sha-512`            |   | ❌ |                                                                        |
-| digest: `id-sha-256`            | ✅ |   | `id-*` digests are more resilient for `content-encoding` support       |
+| digest: `id-sha-256`            |   | ❌ |                                                                        |
 | custom digest formats           |   | ❌ |                                                                        |
 
 ## Contributing
@@ -151,7 +153,7 @@ I would love your help!
 [dighdr]: https://datatracker.ietf.org/doc/draft-ietf-httpbis-digest-headers/
 [myblog]: https://repl.ca/modern-webhook-signatures/
 
-[godoc]: https://pkg.go.dev/github.com/jbowes/httpsig
+[godoc]: https://pkg.go.dev/github.com/offblocks/httpsig
 [issues]: ./issues
 [bug]: ./issues/new?labels=bug
 [enhancement]: ./issues/new?labels=enhancement

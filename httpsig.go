@@ -7,6 +7,7 @@ package httpsig
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"errors"
 	"io"
@@ -27,14 +28,11 @@ func sliceHas(haystack []string, needle string) bool {
 }
 
 type Signer struct {
-	signer
+	*signer
 }
 
 func NewSigner(opts ...signOption) *Signer {
-	s := signer{
-		keys:    make(map[string]sigHolder),
-		nowFunc: time.Now,
-	}
+	s := signer{}
 
 	for _, o := range opts {
 		o.configureSign(&s)
@@ -47,13 +45,13 @@ func NewSigner(opts ...signOption) *Signer {
 	// TODO: normalize headers? lowercase & de-dupe
 
 	// specialty components and digest first, for aesthetics
-	for _, comp := range []string{"digest", "@query", "@path", "@method"} {
+	for _, comp := range []string{"content-digest", "@query", "@path", "@method"} {
 		if !sliceHas(s.headers, comp) {
 			s.headers = append([]string{comp}, s.headers...)
 		}
 	}
 
-	return &Signer{s}
+	return &Signer{&s}
 }
 
 func (s *Signer) Sign(r *http.Request) error {
@@ -72,7 +70,7 @@ func (s *Signer) Sign(r *http.Request) error {
 
 	// Always set a digest (for now)
 	// TODO: we could skip setting digest on an empty body if content-length is included in the sig
-	r.Header.Set("Digest", calcDigest(b.Bytes()))
+	r.Header.Set("Content-Digest", calcDigest(b.Bytes()))
 
 	msg := messageFromRequest(r)
 	hdr, err := s.signer.Sign(msg)
@@ -131,9 +129,9 @@ func (v *Verifier) Verify(r *http.Request) (keyID string, err error) {
 		}
 	}
 
-	// Check the digest if set. We only support id-sha-256 for now.
+	// Check the digest if set. We only support sha-512 for now.
 	// TODO: option to require this?
-	if dig := r.Header.Get("Digest"); dig != "" {
+	if dig := r.Header.Get("Content-Digest"); dig != "" {
 		if !verifyDigest(b.Bytes(), dig) {
 			return keyID, errors.New("digest mismatch")
 		}
@@ -233,11 +231,27 @@ func WithVerifyingKeyResolver(resolver VerifyingKeyResolver) verifyOption {
 	}
 }
 
+// WithSignRsaPkcs1v15Sha256 adds signing using `rsa-v1_5-sha256` with the given private key
+// using the given key id.
+func WithSignRsaPkcs1v15Sha256(keyID string, pk *rsa.PrivateKey) signOption {
+	return &optImpl{
+		s: func(s *signer) { s.keys.Store(keyID, signRsaPkcs1v15Sha256(pk)) },
+	}
+}
+
+// WithVerifyRsaPkcs1v15Sha256 adds signature verification using `rsa-v1_5-sha256` with the
+// given public key using the given key id.
+func WithVerifyRsaPkcs1v15Sha256(keyID string, pk *rsa.PublicKey) verifyOption {
+	return &optImpl{
+		v: func(v *verifier) { v.keys.Store(keyID, verifyRsaPkcs1v15Sha256(pk)) },
+	}
+}
+
 // WithSignRsaPssSha512 adds signing using `rsa-pss-sha512` with the given private key
 // using the given key id.
 func WithSignRsaPssSha512(keyID string, pk *rsa.PrivateKey) signOption {
 	return &optImpl{
-		s: func(s *signer) { s.keys[keyID] = signRsaPssSha512(pk) },
+		s: func(s *signer) { s.keys.Store(keyID, signRsaPssSha512(pk)) },
 	}
 }
 
@@ -253,7 +267,7 @@ func WithVerifyRsaPssSha512(keyID string, pk *rsa.PublicKey) verifyOption {
 // using the given key id.
 func WithSignEcdsaP256Sha256(keyID string, pk *ecdsa.PrivateKey) signOption {
 	return &optImpl{
-		s: func(s *signer) { s.keys[keyID] = signEccP256(pk) },
+		s: func(s *signer) { s.keys.Store(keyID, signEccP256(pk)) },
 	}
 }
 
@@ -265,11 +279,43 @@ func WithVerifyEcdsaP256Sha256(keyID string, pk *ecdsa.PublicKey) verifyOption {
 	}
 }
 
+// WithSignEcdsaP384Sha384 adds signing using `ecdsa-p384-sha384` with the given private key
+// using the given key id.
+func WithSignEcdsaP384Sha384(keyID string, pk *ecdsa.PrivateKey) signOption {
+	return &optImpl{
+		s: func(s *signer) { s.keys.Store(keyID, signEccP384(pk)) },
+	}
+}
+
+// WithVerifyEcdsaP384Sha384 adds signature verification using `ecdsa-p384-sha384` with the
+// given public key using the given key id.
+func WithVerifyEcdsaP384Sha384(keyID string, pk *ecdsa.PublicKey) verifyOption {
+	return &optImpl{
+		v: func(v *verifier) { v.keys.Store(keyID, verifyEccP384(pk)) },
+	}
+}
+
+// WithSignEd25519 adds signing using `ed25519` with the given private key
+// using the given key id.
+func WithSignEd25519(keyID string, pk *ed25519.PrivateKey) signOption {
+	return &optImpl{
+		s: func(s *signer) { s.keys.Store(keyID, signEd25519(pk)) },
+	}
+}
+
+// WithVerifyEd25519 adds signature verification using `ed25519` with the
+// given public key using the given key id.
+func WithVerifyEd25519(keyID string, pk *ed25519.PublicKey) verifyOption {
+	return &optImpl{
+		v: func(v *verifier) { v.keys.Store(keyID, verifyEd25519(pk)) },
+	}
+}
+
 // WithHmacSha256 adds signing or signature verification using `hmac-sha256` with the
 // given shared secret using the given key id.
 func WithHmacSha256(keyID string, secret []byte) signOrVerifyOption {
 	return &optImpl{
-		s: func(s *signer) { s.keys[keyID] = signHmacSha256(secret) },
+		s: func(s *signer) { s.keys.Store(keyID, signHmacSha256(secret)) },
 		v: func(v *verifier) { v.keys.Store(keyID, verifyHmacSha256(secret)) },
 	}
 }
