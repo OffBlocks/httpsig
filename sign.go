@@ -8,34 +8,51 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 type sigImpl struct {
 	w    io.Writer
-	sign func() []byte
+	sign func() ([]byte, error)
 }
 
 type sigHolder struct {
 	alg    string
+	nonce  func() *string
 	signer func() sigImpl
 }
 
 type signer struct {
 	headers []string
-	keys    map[string]sigHolder
+	keys    sync.Map
 
-	// For testing
-	nowFunc func() time.Time
+	created *time.Time
+	expires *time.Time
+	nonce   *string
+}
+
+func withCreated(t time.Time) signOption {
+	return &optImpl{
+		s: func(s *signer) { s.created = &t },
+	}
+}
+
+func withNonce(nonce string) signOption {
+	return &optImpl{
+		s: func(s *signer) { s.nonce = &nonce },
+	}
 }
 
 func (s *signer) Sign(msg *message) (http.Header, error) {
@@ -73,33 +90,47 @@ func (s *signer) Sign(msg *message) (http.Header, error) {
 		items = append(items, h)
 	}
 
-	now := s.nowFunc()
+	var now time.Time
+	if s.created != nil {
+		now = *s.created
+	} else {
+		now = time.Now()
+	}
 
 	sps := make(map[string]string)
 	sigs := make(map[string]string)
 	i := 1 // 1 indexed icky
-	for k, si := range s.keys {
+	s.keys.Range(func(k, si any) bool {
 		sp := &signatureParams{
 			items:   items,
-			keyID:   k,
+			keyID:   k.(string),
 			created: now,
-			alg:     si.alg,
+			expires: s.expires,
+			nonce:   s.nonce,
+			alg:     si.(sigHolder).alg,
 		}
 		sps[fmt.Sprintf("sig%d", i)] = sp.canonicalize()
 
-		signer := si.signer()
+		signer := si.(sigHolder).signer()
 		if _, err := signer.w.Write(b.Bytes()); err != nil {
-			return nil, err
+			panic(err)
 		}
 
 		if err := canonicalizeSignatureParams(signer.w, sp); err != nil {
-			return nil, err
+			panic(err)
 		}
 
-		sigs[fmt.Sprintf("sig%d", i)] = base64.StdEncoding.EncodeToString(signer.sign())
+		signed, err := signer.sign()
+		if err != nil {
+			panic(err)
+		}
+
+		sigs[fmt.Sprintf("sig%d", i)] = base64.StdEncoding.EncodeToString(signed)
 
 		i++
-	}
+
+		return true
+	})
 
 	// for each configured key id,
 	// canonicalize signing options appended to byte slice
@@ -125,17 +156,39 @@ func (s *signer) Sign(msg *message) (http.Header, error) {
 func signRsaPssSha512(pk *rsa.PrivateKey) sigHolder {
 	return sigHolder{
 		alg: "rsa-pss-sha512",
+		nonce: func() *string {
+			n := nonce()
+			return &n
+		},
+		signer: func() sigImpl {
+			h := sha512.New()
+
+			return sigImpl{
+				w: h,
+				sign: func() ([]byte, error) {
+					b := h.Sum(nil)
+					return rsa.SignPSS(rand.Reader, pk, crypto.SHA512, b, nil)
+				},
+			}
+		},
+	}
+}
+
+func signRsaPkcs1v15Sha256(pk *rsa.PrivateKey) sigHolder {
+	return sigHolder{
+		alg: "rsa-v1_5-sha256",
+		nonce: func() *string {
+			n := nonce()
+			return &n
+		},
 		signer: func() sigImpl {
 			h := sha256.New()
 
 			return sigImpl{
 				w: h,
-				sign: func() []byte {
+				sign: func() ([]byte, error) {
 					b := h.Sum(nil)
-
-					// TODO: might have to deal with this error :)
-					sig, _ := rsa.SignPSS(rand.Reader, pk, crypto.SHA512, b, nil)
-					return sig
+					return rsa.SignPKCS1v15(rand.Reader, pk, crypto.SHA512, b)
 				},
 			}
 		},
@@ -145,17 +198,60 @@ func signRsaPssSha512(pk *rsa.PrivateKey) sigHolder {
 func signEccP256(pk *ecdsa.PrivateKey) sigHolder {
 	return sigHolder{
 		alg: "ecdsa-p256-sha256",
+		nonce: func() *string {
+			n := nonce()
+			return &n
+		},
 		signer: func() sigImpl {
 			h := sha256.New()
 
 			return sigImpl{
 				w: h,
-				sign: func() []byte {
+				sign: func() ([]byte, error) {
 					b := h.Sum(nil)
+					return ecdsa.SignASN1(rand.Reader, pk, b)
+				},
+			}
+		},
+	}
+}
 
-					// TODO: might have to deal with this error :)
-					sig, _ := ecdsa.SignASN1(rand.Reader, pk, b)
-					return sig
+func signEccP384(pk *ecdsa.PrivateKey) sigHolder {
+	return sigHolder{
+		alg: "ecdsa-p384-sha384",
+		nonce: func() *string {
+			n := nonce()
+			return &n
+		},
+		signer: func() sigImpl {
+			h := sha512.New384()
+
+			return sigImpl{
+				w: h,
+				sign: func() ([]byte, error) {
+					b := h.Sum(nil)
+					return ecdsa.SignASN1(rand.Reader, pk, b)
+				},
+			}
+		},
+	}
+}
+
+func signEd25519(pk *ed25519.PrivateKey) sigHolder {
+	return sigHolder{
+		alg: "ed25519",
+		nonce: func() *string {
+			n := nonce()
+			return &n
+		},
+		signer: func() sigImpl {
+			var h bytes.Buffer
+
+			return sigImpl{
+				w: &h,
+				sign: func() ([]byte, error) {
+					b := h.Bytes()
+					return ed25519.Sign(*pk, b), nil
 				},
 			}
 		},
@@ -170,8 +266,17 @@ func signHmacSha256(secret []byte) sigHolder {
 
 			return sigImpl{
 				w:    h,
-				sign: func() []byte { return h.Sum(nil) },
+				sign: func() ([]byte, error) { return h.Sum(nil), nil },
 			}
 		},
 	}
+}
+
+func nonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+
+	return base64.URLEncoding.EncodeToString(b)
 }

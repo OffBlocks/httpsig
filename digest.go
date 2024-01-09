@@ -5,7 +5,7 @@
 package httpsig
 
 import (
-	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -17,9 +17,9 @@ import (
 // TODO: support more algorithms, and maybe do its own package.
 
 func calcDigest(in []byte) string {
-	dig := sha256.Sum256(in)
+	dig := sha512.Sum512(in)
 
-	return fmt.Sprintf("id-sha256=%s", base64.StdEncoding.EncodeToString(dig[:]))
+	return fmt.Sprintf("sha-512=:%s:", base64.StdEncoding.EncodeToString(dig[:]))
 }
 
 func verifyDigest(in []byte, dig string) bool {

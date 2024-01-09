@@ -1,3 +1,3 @@
-module github.com/Gh0u1L5/httpsig
+module github.com/offblocks/httpsig
 
 go 1.18
