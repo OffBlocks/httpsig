@@ -5,8 +5,12 @@
 package httpsig
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"net/http"
@@ -36,159 +40,453 @@ func testReq() *message {
 			"Host":           []string{"example.com"},
 			"Date":           []string{"Tue, 20 Apr 2021 02:07:55 GMT"},
 			"Content-Type":   []string{"application/json"},
-			"Digest":         []string{"SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE="},
+			"Content-Digest": []string{"sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"},
 			"Content-Length": []string{"18"},
 		},
 	}
 }
 
-func TestSign_B_2_5(t *testing.T) {
-	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
+func TestSign_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
+	block, _ := pem.Decode([]byte(testKeyRSAPSS))
+	if block == nil {
+		panic("could not decode test private key pem")
+	}
+
+	// taken from crypto/x509/pkcs8.go
+	type pkcs8 struct {
+		Version    int
+		Algo       pkix.AlgorithmIdentifier
+		PrivateKey []byte
+		// optional attributes omitted.
+	}
+	var privKey pkcs8
+	if _, err := asn1.Unmarshal(block.Bytes, &privKey); err != nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
 	if err != nil {
-		panic("could not decode test shared secret")
+		panic("could not decode test private key: " + err.Error())
 	}
 
-	s := &signer{
-		headers: []string{"@authority", "date", "content-type"},
-		keys: map[string]sigHolder{
-			"test-shared-secret": signHmacSha256(k),
-		},
+	s := signer{}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
 
-		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
-	}
+	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
 
 	hdr, err := s.Sign(testReq())
 	if err != nil {
 		t.Error("signing failed:", err)
 	}
 
-	if hdr.Get("Signature-Input") != `sig1=("@authority" "date" "content-type");created=1618884475;keyid="test-shared-secret"` {
+	if hdr.Get("Signature-Input") != `sig1=();created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd";alg="rsa-pss-sha512"` {
 		t.Error("signature input did not match. Got:", hdr.Get("Signature-Input"))
 	}
 
-	if hdr.Get("Signature") != `sig1=:fN3AMNGbx0V/cIEKkZOvLOoC3InI+lM2+gTv22x3ia8=:` {
+	// can't verify signature as it is randomised
+}
+
+func TestVerify_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
+	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pk := pki.(*rsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
+	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
+
+	req := testReq()
+	req.Header.Set("Signature-Input", `sig1=();created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd"`)
+	req.Header.Set("Signature", `sig1=:d2pmTvmbncD3xQm8E9ZV2828BjQWGgiwAaw5bAkgibUopemLJcWDy/lkbbHAve4cRAtx31Iq786U7it++wgGxbtRxf8Udx7zFZsckzXaJMkA7ChG52eSkFxykJeNqsrWH5S+oxNFlD4dzVuwe8DhTSja8xxbR/Z2cOGdCbzR72rgFWhzx2VjBqJzsPLMIQKhO4DGezXehhWwE56YCE+O6c0mKZsfxVrogUvA4HELjVKWmAvtl6UnCh8jYzuVG5WSb/QEVPnP5TmcAnLH1g+s++v6d4s8m0gCw1fV5/SITLq9mhho8K3+7EPYTU8IU1bLhdxO5Nyt8C8ssinQ98Xw9Q==:`)
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestRoundtrip_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
+	blockPrivate, _ := pem.Decode([]byte(testKeyRSAPSS))
+	if blockPrivate == nil {
+		panic("could not decode test private key pem")
+	}
+
+	// taken from crypto/x509/pkcs8.go
+	type pkcs8 struct {
+		Version    int
+		Algo       pkix.AlgorithmIdentifier
+		PrivateKey []byte
+		// optional attributes omitted.
+	}
+	var privKey pkcs8
+	if _, err := asn1.Unmarshal(blockPrivate.Bytes, &privKey); err != nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	s := signer{}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	blockPub, _ := pem.Decode([]byte(testKeyRSAPSSPub))
+	if blockPub == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(blockPub.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pubk := pki.(*rsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
+	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pubk))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestSign_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
+	block, _ := pem.Decode([]byte(testKeyRSAPSS))
+	if block == nil {
+		panic("could not decode test private key pem")
+	}
+
+	// taken from crypto/x509/pkcs8.go
+	type pkcs8 struct {
+		Version    int
+		Algo       pkix.AlgorithmIdentifier
+		PrivateKey []byte
+		// optional attributes omitted.
+	}
+	var privKey pkcs8
+	if _, err := asn1.Unmarshal(block.Bytes, &privKey); err != nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	s := signer{
+		headers: []string{"@authority", "content-digest"},
+	}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+
+	hdr, err := s.Sign(testReq())
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	if hdr.Get("Signature-Input") != `sig1=("@authority" "content-digest");created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd";alg="rsa-pss-sha512"` {
+		t.Error("signature input did not match. Got:", hdr.Get("Signature-Input"))
+	}
+
+	// can't verify signature as it is randomised
+}
+
+func TestVerify_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
+	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pk := pki.(*rsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
+	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
+
+	req := testReq()
+	req.Header.Set("Signature-Input", `sig1=("@authority" "content-digest");created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd";alg="rsa-pss-sha512"`)
+	req.Header.Set("Signature", `sig1=:e7vSoRHcw4hxLAp129Qdxui1KTgTnI8LM8/gNK7PZJwWm/HCcz+Mxwrzs97fNVCeiu0XPjtPdUcc5mz6/rD644aj0FpvSZzRhlP3KLBU8QMCI80m8blQhDBQeVR/XX9CGLD9BSgWPmd9J4FOf1b/giseT6dbxof1gVvZbHBVPurIGVyht7kNDUTLzxPEFlm7hQBKz0U5UCuqm4Fxw1jRaFm5WhWHwU1A3iqgf7QqE1HT+bCn/MCPl9KstKY5XgKDnJjGA0+qDfFrsNpii1hx/GNsAPWfcJnc7NjASfXtkyItr1e0Wqk2c2gpejiTxW7Qu9mYUmODBiCDn75rK9hSyQ==:`)
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestRoundtrip_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
+	blockPrivate, _ := pem.Decode([]byte(testKeyRSAPSS))
+	if blockPrivate == nil {
+		panic("could not decode test private key pem")
+	}
+
+	// taken from crypto/x509/pkcs8.go
+	type pkcs8 struct {
+		Version    int
+		Algo       pkix.AlgorithmIdentifier
+		PrivateKey []byte
+		// optional attributes omitted.
+	}
+	var privKey pkcs8
+	if _, err := asn1.Unmarshal(blockPrivate.Bytes, &privKey); err != nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	s := signer{
+		headers: []string{"@authority", "content-digest"},
+	}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-rsa-pss", signRsaPssSha512(pk))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pkpub := pki.(*rsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
+	}
+	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pkpub))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestRoundtrip_ECDSA_P256_SHA256(t *testing.T) {
+	blockPrivate, _ := pem.Decode([]byte(testKeyECCP256))
+	if blockPrivate == nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParseECPrivateKey(blockPrivate.Bytes)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	s := signer{}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-ecc-p256", signEccP256(pk))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	block, _ := pem.Decode([]byte(testKeyECCP256Pub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pkpub := pki.(*ecdsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
+	}
+	v.keys.Store("test-key-ecc-p256", verifyEccP256(pkpub))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestRoundtrip_ECDSA_P384_SHA384(t *testing.T) {
+	blockPrivate, _ := pem.Decode([]byte(testKeyECCP384))
+	if blockPrivate == nil {
+		panic("could not decode test private key pem")
+	}
+
+	pk, err := x509.ParseECPrivateKey(blockPrivate.Bytes)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	s := signer{}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-ecc-p384", signEccP384(pk))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	block, _ := pem.Decode([]byte(testKeyECCP384Pub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pkpub := pki.(*ecdsa.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
+	}
+	v.keys.Store("test-key-ecc-p384", verifyEccP384(pkpub))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestRoundtrip_ED25519(t *testing.T) {
+	blockPrivate, _ := pem.Decode([]byte(testKeyEd25519))
+	if blockPrivate == nil {
+		panic("could not decode test private key pem")
+	}
+
+	pki, err := x509.ParsePKCS8PrivateKey(blockPrivate.Bytes)
+	if err != nil {
+		panic("could not decode test private key: " + err.Error())
+	}
+
+	pk := pki.(ed25519.PrivateKey)
+
+	s := signer{}
+	withCreated(time.Unix(1618884473, 0)).configureSign(&s)
+	withNonce("b3k2pp5k7z-50gnwp.yemd").configureSign(&s)
+
+	s.keys.Store("test-key-ed25519", signEd25519(&pk))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	block, _ := pem.Decode([]byte(testKeyEd25519Pub))
+	if block == nil {
+		panic("could not decode test public key pem")
+	}
+
+	pkpubi, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("could not decode test public key: " + err.Error())
+	}
+
+	pkpub := pkpubi.(ed25519.PublicKey)
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884473, 0) },
+	}
+	v.keys.Store("test-key-ed25519", verifyEd25519(&pkpub))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
+func TestSign_HMAC_SHA_256_B_2_5(t *testing.T) {
+	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
+	if err != nil {
+		panic("could not decode test shared secret")
+	}
+
+	s := signer{
+		headers: []string{"@authority", "date", "content-type"},
+	}
+	withCreated(time.Unix(1618884475, 0)).configureSign(&s)
+
+	s.keys.Store("test-shared-secret", signHmacSha256(k))
+
+	hdr, err := s.Sign(testReq())
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	if hdr.Get("Signature-Input") != `sig1=("@authority" "date" "content-type");created=1618884475;keyid="test-shared-secret";alg="hmac-sha256"` {
+		t.Error("signature input did not match. Got:", hdr.Get("Signature-Input"))
+	}
+
+	if hdr.Get("Signature") != `sig1=:Ss67se+mIHEQhqCYpEpp521HLd+2KuQyXRtHr1RfIRk=:` {
 		t.Error("signature did not match. Got:", hdr.Get("Signature"))
 	}
 }
 
-func TestVerify_B_2_1(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	if block == nil {
-		panic("could not decode test public key pem")
-	}
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		panic("could not decode test public key: " + err.Error())
-	}
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := &verifier{
-		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
-	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig1=();created=1618884475;keyid="test-key-rsa-pss";alg="rsa-pss-sha512"`)
-	req.Header.Set("Signature", `sig1=:HWP69ZNiom9Obu1KIdqPPcu/C1a5ZUMBbqS/xwJECV8bhIQVmEAAAzz8LQPvtP1iFSxxluDO1KE9b8L+O64LEOvhwYdDctV5+E39Jy1eJiD7nYREBgxTpdUfzTO+Trath0vZdTylFlxK4H3l3s/cuFhnOCxmFYgEa+cw+StBRgY1JtafSFwNcZgLxVwialuH5VnqJS4JN8PHD91XLfkjMscTo4jmVMpFd3iLVe0hqVFl7MDt6TMkwIyVFnEZ7B/VIQofdShO+C/7MuupCSLVjQz5xA+Zs6Hw+W9ESD/6BuGs6LF1TcKLxW+5K+2zvDY/Cia34HNpRW5io7Iv9/b7iQ==:`)
-
-	_, err = v.Verify(req)
-	if err != nil {
-		t.Error("verification failed:", err)
-	}
-}
-
-func TestVerify_B_2_2(t *testing.T) {
-	// TODO: key parsing is duplicated
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	if block == nil {
-		panic("could not decode test public key pem")
-	}
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		panic("could not decode test public key: " + err.Error())
-	}
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := &verifier{
-		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
-	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig1=("@authority" content-type");created=1618884475;keyid="test-key-rsa-pss"`)
-	req.Header.Set("Signature", `sig1=:ik+OtGmM/kFqENDf9Plm8AmPtqtC7C9a+zYSaxr58b/E6h81ghJS3PcH+m1asiMp8yvccnO/RfaexnqanVB3C72WRNZN7skPTJmUVmoIeqZncdP2mlfxlLP6UbkrgYsk91NS6nwkKC6RRgLhBFqzP42oq8D2336OiQPDAo/04SxZt4Wx9nDGuy2SfZJUhsJqZyEWRk4204x7YEB3VxDAAlVgGt8ewilWbIKKTOKp3ymUeQIwptqYwv0l8mN404PPzRBTpB7+HpClyK4CNp+SVv46+6sHMfJU4taz10s/NoYRmYCGXyadzYYDj0BYnFdERB6NblI/AOWFGl5Axhhmjg==:`)
-
-	_, err = v.Verify(req)
-	if err != nil {
-		t.Error("verification failed:", err)
-	}
-}
-
-func TestVerify_B_2_3(t *testing.T) {
-	t.Skip("not working as of draft 06 changes")
-	// TODO: key parsing is duplicated
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	if block == nil {
-		panic("could not decode test public key pem")
-	}
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		panic("could not decode test public key: " + err.Error())
-	}
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := &verifier{
-		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
-	}
-	v.keys.Store("test-key-rsa-pss", verifyRsaPssSha512(pk))
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig1=("date" "@method" "@path" "@query" "@authority" "content-type" "digest" "content-length");created=1618884475;keyid="test-key-rsa-pss"`)
-	req.Header.Set("Signature", `sig1=:JuJnJMFGD4HMysAGsfOY6N5ZTZUknsQUdClNG51VezDgPUOW03QMe74vbIdndKwW1BBrHOHR3NzKGYZJ7X3ur23FMCdANe4VmKb3Rc1Q/5YxOO8p7KoyfVa4uUcMk5jB9KAn1M1MbgBnqwZkRWsbv8ocCqrnD85Kavr73lx51k1/gU8w673WT/oBtxPtAn1eFjUyIKyA+XD7kYph82I+ahvm0pSgDPagu917SlqUjeaQaNnlZzO03Iy1RZ5XpgbNeDLCqSLuZFVID80EohC2CQ1cL5svjslrlCNstd2JCLmhjL7xV3NYXerLim4bqUQGRgDwNJRnqobpS6C1NBns/Q==:`)
-	_, err = v.Verify(req)
-	if err != nil {
-		t.Error("verification failed:", err)
-	}
-}
-
-func TestVerify_B_2_4(t *testing.T) {
-	t.Skip("not working yet")
-	/*
-		block, _ := pem.Decode([]byte(testKeyECCP256Pub))
-		if block == nil {
-			panic("could not decode test public key pem")
-		}
-
-		pk, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			panic("could not decode test public key: " + err.Error())
-		}
-
-		v := &verifier{
-			keys: map[string]verHolder{
-				"test-key-ecc-p256": verifyEccP256(pk.(*ecdsa.PublicKey)),
-			},
-
-			nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
-		}
-
-		req := testReq()
-		req.Header.Set("Signature-Input", `sig1=("content-type" "digest" "content-length");created=1618884475;keyid="test-key-ecc-p256"`)
-		req.Header.Set("Signature", `sig1=:n8RKXkj0iseWDmC6PNSQ1GX2R9650v+lhbb6rTGoSrSSx18zmn6fPOtBx48/WffYLO0n1RHHf9scvNGAgGq52Q==:`)
-		err = v.Verify(req)
-		if err != nil {
-			t.Error("verification failed:", err)
-		}
-	*/
-}
-
-func TestVerify_B_2_5(t *testing.T) {
+func TestVerify_HMAC_SHA_256_B_2_5(t *testing.T) {
 	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
 	if err != nil {
 		panic("could not decode test shared secret")
@@ -209,39 +507,52 @@ func TestVerify_B_2_5(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_HMAC_SHA_256_B_2_5(t *testing.T) {
+	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
+	if err != nil {
+		panic("could not decode test shared secret")
+	}
+
+	s := signer{
+		headers: []string{"@authority", "date", "content-type"},
+	}
+	withCreated(time.Unix(1618884475, 0)).configureSign(&s)
+
+	s.keys.Store("test-shared-secret", signHmacSha256(k))
+
+	req := testReq()
+	hdr, err := s.Sign(req)
+	if err != nil {
+		t.Error("signing failed:", err)
+	}
+
+	v := &verifier{
+		nowFunc: func() time.Time { return time.Unix(1618884475, 0) },
+	}
+	v.keys.Store("test-shared-secret", verifyHmacSha256(k))
+
+	req.Header.Set("Signature-Input", hdr["Signature-Input"][0])
+	req.Header.Set("Signature", hdr["Signature"][0])
+
+	_, err = v.Verify(req)
+	if err != nil {
+		t.Error("verification failed:", err)
+	}
+}
+
 // The following keypairs are taken from the Draft Standard, so we may recreate the examples in tests.
 // If your robot scans this repo and says it's leaking keys I will be mildly amused.
 
-/*
-
-var testKeyRSA = `
------BEGIN RSA PRIVATE KEY-----
-MIIEqAIBAAKCAQEAhAKYdtoeoy8zcAcR874L8cnZxKzAGwd7v36APp7Pv6Q2jdsP
-BRrwWEBnez6d0UDKDwGbc6nxfEXAy5mbhgajzrw3MOEt8uA5txSKobBpKDeBLOsd
-JKFqMGmXCQvEG7YemcxDTRPxAleIAgYYRjTSd/QBwVW9OwNFhekro3RtlinV0a75
-jfZgkne/YiktSvLG34lw2zqXBDTC5NHROUqGTlML4PlNZS5Ri2U4aCNx2rUPRcKI
-lE0PuKxI4T+HIaFpv8+rdV6eUgOrB2xeI1dSFFn/nnv5OoZJEIB+VmuKn3DCUcCZ
-SFlQPSXSfBDiUGhwOw76WuSSsf1D4b/vLoJ10wIDAQABAoIBAG/JZuSWdoVHbi56
-vjgCgkjg3lkO1KrO3nrdm6nrgA9P9qaPjxuKoWaKO1cBQlE1pSWp/cKncYgD5WxE
-CpAnRUXG2pG4zdkzCYzAh1i+c34L6oZoHsirK6oNcEnHveydfzJL5934egm6p8DW
-+m1RQ70yUt4uRc0YSor+q1LGJvGQHReF0WmJBZHrhz5e63Pq7lE0gIwuBqL8SMaA
-yRXtK+JGxZpImTq+NHvEWWCu09SCq0r838ceQI55SvzmTkwqtC+8AT2zFviMZkKR
-Qo6SPsrqItxZWRty2izawTF0Bf5S2VAx7O+6t3wBsQ1sLptoSgX3QblELY5asI0J
-YFz7LJECgYkAsqeUJmqXE3LP8tYoIjMIAKiTm9o6psPlc8CrLI9CH0UbuaA2JCOM
-cCNq8SyYbTqgnWlB9ZfcAm/cFpA8tYci9m5vYK8HNxQr+8FS3Qo8N9RJ8d0U5Csw
-DzMYfRghAfUGwmlWj5hp1pQzAuhwbOXFtxKHVsMPhz1IBtF9Y8jvgqgYHLbmyiu1
-mwJ5AL0pYF0G7x81prlARURwHo0Yf52kEw1dxpx+JXER7hQRWQki5/NsUEtv+8RT
-qn2m6qte5DXLyn83b1qRscSdnCCwKtKWUug5q2ZbwVOCJCtmRwmnP131lWRYfj67
-B/xJ1ZA6X3GEf4sNReNAtaucPEelgR2nsN0gKQKBiGoqHWbK1qYvBxX2X3kbPDkv
-9C+celgZd2PW7aGYLCHq7nPbmfDV0yHcWjOhXZ8jRMjmANVR/eLQ2EfsRLdW69bn
-f3ZD7JS1fwGnO3exGmHO3HZG+6AvberKYVYNHahNFEw5TsAcQWDLRpkGybBcxqZo
-81YCqlqidwfeO5YtlO7etx1xLyqa2NsCeG9A86UjG+aeNnXEIDk1PDK+EuiThIUa
-/2IxKzJKWl1BKr2d4xAfR0ZnEYuRrbeDQYgTImOlfW6/GuYIxKYgEKCFHFqJATAG
-IxHrq1PDOiSwXd2GmVVYyEmhZnbcp8CxaEMQoevxAta0ssMK3w6UsDtvUvYvF22m
-qQKBiD5GwESzsFPy3Ga0MvZpn3D6EJQLgsnrtUPZx+z2Ep2x0xc5orneB5fGyF1P
-WtP+fG5Q6Dpdz3LRfm+KwBCWFKQjg7uTxcjerhBWEYPmEMKYwTJF5PBG9/ddvHLQ
-EQeNC8fHGg4UXU8mhHnSBt3EA10qQJfRDs15M38eG2cYwB1PZpDHScDnDA0=
------END RSA PRIVATE KEY-----
+var testKeyRSAPSSPub = `
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr4tmm3r20Wd/PbqvP1s2
++QEtvpuRaV8Yq40gjUR8y2Rjxa6dpG2GXHbPfvMs8ct+Lh1GH45x28Rw3Ry53mm+
+oAXjyQ86OnDkZ5N8lYbggD4O3w6M6pAvLkhk95AndTrifbIFPNU8PPMO7OyrFAHq
+gDsznjPFmTOtCEcN2Z1FpWgchwuYLPL+Wokqltd11nqqzi+bJ9cvSKADYdUAAN5W
+Utzdpiy6LbTgSxP7ociU4Tn0g5I6aDZJ7A8Lzo0KSyZYoA485mqcO0GVAdVw9lq4
+aOT9v6d+nb4bnNkQVklLQ3fVAvJm+xdDOp9LCNCN48V2pnDOkFV6+U9nV5oyc6XI
+2wIDAQAB
+-----END PUBLIC KEY-----
 `
 
 var testKeyRSAPSS = `
@@ -274,21 +585,14 @@ S7Fnk6ZVVVHsxjtaHy1uJGFlaZzKR4AGNaUTOJMs6NadzCmGPAxNQQOCqoUjn4XR
 rOjr9w349JooGXhOxbu8nOxX
 -----END PRIVATE KEY-----
 `
-*/
 
-var testKeyRSAPSSPub = `
+var testKeyECCP256Pub = `
 -----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr4tmm3r20Wd/PbqvP1s2
-+QEtvpuRaV8Yq40gjUR8y2Rjxa6dpG2GXHbPfvMs8ct+Lh1GH45x28Rw3Ry53mm+
-oAXjyQ86OnDkZ5N8lYbggD4O3w6M6pAvLkhk95AndTrifbIFPNU8PPMO7OyrFAHq
-gDsznjPFmTOtCEcN2Z1FpWgchwuYLPL+Wokqltd11nqqzi+bJ9cvSKADYdUAAN5W
-Utzdpiy6LbTgSxP7ociU4Tn0g5I6aDZJ7A8Lzo0KSyZYoA485mqcO0GVAdVw9lq4
-aOT9v6d+nb4bnNkQVklLQ3fVAvJm+xdDOp9LCNCN48V2pnDOkFV6+U9nV5oyc6XI
-2wIDAQAB
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqIVYZVLCrPZHGHjP17CTW0/+D9Lf
+w0EkjqF7xB4FivAxzic30tMM4GF+hR6Dxh71Z50VGGdldkkDXZCnTNnoXQ==
 -----END PUBLIC KEY-----
-   `
+`
 
-/*
 var testKeyECCP256 = `
 -----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIFKbhfNZfpDsW43+0+JjUr9K+bTeuxopu653+hBaXGA7oAoGCCqGSM49
@@ -297,12 +601,33 @@ AwEHoUQDQgAEqIVYZVLCrPZHGHjP17CTW0/+D9Lfw0EkjqF7xB4FivAxzic30tMM
 -----END EC PRIVATE KEY-----
 `
 
-var testKeyECCP256Pub = `
+var testKeyECCP384Pub = `
 -----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqIVYZVLCrPZHGHjP17CTW0/+D9Lf
-w0EkjqF7xB4FivAxzic30tMM4GF+hR6Dxh71Z50VGGdldkkDXZCnTNnoXQ==
+MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEUWosCCtXp4eJkinU2XaDGSrrSfMynZkI
+EELa7Ratog6SrkIFD9nowhLoxc3Px4zAwxQzD8j5Th+vCtswq7ExACNiM6kM9974
+mF1l1Ll2Pn19pJCE2SutyxcMeAr4Lrgi
 -----END PUBLIC KEY-----
 `
-*/
+
+var testKeyECCP384 = `
+-----BEGIN EC PRIVATE KEY-----
+MIGkAgEBBDDayXurkt5pieok3TsD5CdPvrUgljTE8n5o9M1bapc8yMz94WCAiQZb
+TXi9MwOv4TWgBwYFK4EEACKhZANiAARRaiwIK1enh4mSKdTZdoMZKutJ8zKdmQgQ
+QtrtFq2iDpKuQgUP2ejCEujFzc/HjMDDFDMPyPlOH68K2zCrsTEAI2IzqQz33viY
+XWXUuXY+fX2kkITZK63LFwx4CvguuCI=
+-----END EC PRIVATE KEY-----
+`
+
+var testKeyEd25519Pub = `
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAJrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=
+-----END PUBLIC KEY-----
+`
+
+var testKeyEd25519 = `
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF
+-----END PRIVATE KEY-----
+`
 
 var testSharedSecret = `uzvJfB4u3N0Jy4T7NZ75MDVcr8zSTInedJtkgcu46YW4XByzNJjxBdtjUkdJPBtbmHhIDi6pcl8jsasjlTMtDQ==`

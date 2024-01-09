@@ -99,7 +99,7 @@ type signatureParams struct {
 	alg     string
 	created time.Time
 	expires *time.Time
-	nonce   string
+	nonce   *string
 }
 
 func (sp *signatureParams) canonicalize() string {
@@ -116,6 +116,10 @@ func (sp *signatureParams) canonicalize() string {
 
 	if sp.keyID != "" {
 		o += fmt.Sprintf(";keyid=\"%s\"", sp.keyID)
+	}
+
+	if sp.nonce != nil {
+		o += fmt.Sprintf(";nonce=\"%s\"", *sp.nonce)
 	}
 
 	if sp.alg != "" {
@@ -168,7 +172,8 @@ func parseSignatureInput(in string) (*signatureParams, error) {
 		case "keyid":
 			sp.keyID = strings.Trim(paramParts[1], `"`)
 		case "nonce":
-			sp.nonce = strings.Trim(paramParts[1], `"`)
+			nonce := strings.Trim(paramParts[1], `"`)
+			sp.nonce = &nonce
 		case "created":
 			i, err := strconv.ParseInt(paramParts[1], 10, 64)
 			if err != nil {
