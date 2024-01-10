@@ -15,13 +15,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.18
+          go-version: 1.21
+          cache-dependency-path: go.sum
+
+      - name: Install dependencies
+        run: go get ./...
 
       - name: Build
         run: go build -v ./...
 
       - name: Test
         run: go test -v ./... -race -coverprofile=coverage.txt -covermode=atomic
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
@@ -42,13 +51,3 @@ jobs:
           tag: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.tag_version.outputs.changelog }}
-
-  golangci:
-    name: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3.5.3
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest

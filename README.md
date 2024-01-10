@@ -79,29 +79,28 @@ For more usage examples and documentation, see the [godoc refernce][godoc]
 
 ## The Big Feature Matrix
 
-This implementation is based on version `06` of [HTTP Message Signatures][msgsig]
-(`draft-ietf-htttpbis-message-signatures-05` from 8 June 2021). Digest
-computation is based on version `05` of [Digest Headers][dighdr]
-(`draft-ietf-httpbis-digest-headers-05` from 13 April 2021).
+This implementation is based on version `19` of [HTTP Message Signatures][msgsig]
+(`draft-ietf-htttpbis-message-signatures-19` from 26 July 2023). Digest
+computation is based on version `13` of [Digest Headers][dighdr]
+(`draft-ietf-httpbis-digest-headers-13` from 10 July 2023).
 
 | Feature                         |   |   | Notes                                                                  |
 | ------------------------------- | - | - | ---------------------------------------------------------------------- |
 | sign requests                   | ✅ |   |                                                                        |
 | verify requests                 | ✅ |   |                                                                        |
-| sign responses                  |   | ❌ |                                                                        |
-| verify responses                |   | ❌ |                                                                        |
-| add `expires` to signature      |   | ❌ | sorely needed                                                          |
+| sign responses                  | ✅ |   |                                                                        |
+| verify responses                | ✅ |   |                                                                        |
+| add `expires` to signature      | ✅ |   |                                                                        |
 | enforce `expires` in verify     | ✅ |   |                                                                        |
 | `@method` component             | ✅ |   |                                                                        |
 | `@authority` component          | ✅ |   |                                                                        |
-| `@scheme` component             |   | ❌ |                                                                        |
-| `@target-uri` component         |   | ❌ |                                                                        |
-| `@request-target` component     |   | ❌ | Semantics changed in draft-06, no longer recommented for use.          |
+| `@scheme` component             | ✅ |   |                                                                        |
+| `@target-uri` component         | ✅ |   |                                                                        |
 | `@path` component               | ✅ |   |                                                                        |
 | `@query` component              | ✅ |   | Encoding handling is missing.                                          |
-| `@query-params` component       |   | ❌ |                                                                        |
-| `@status` component             |   | ❌ |                                                                        |
-| request-response binding        |   | ❌ |                                                                        |
+| `@query-params` component       | ✅ |   |                                                                        |
+| `@status` component             | ✅ |   |                                                                        |
+| request-response binding        | ✅ |   |                                                                        |
 | `Accept-Signature` header       |   | ❌ |                                                                        |
 | create multiple signatures      | ✅ |   |                                                                        |
 | verify from multiple signatures | ✅ |   |                                                                        |
@@ -111,22 +110,12 @@ computation is based on version `05` of [Digest Headers][dighdr]
 | `ecdsa-p256-sha256`             | ✅ |   |                                                                        |
 | `ecdsa-p384-sha384`             | ✅ |   |                                                                        |
 | `ed25519`                       | ✅ |   |                                                                        |
-| custom signature formats        |   | ❌ | `eddsa` is not part of the spec, so custom support here would be nice! |
 | JSON Web Signatures             |   | ❌ | JWS doesn't support any additional algs, but it is part of the spec    |
 | Signature-Input as trailer      |   | ❌ | Trailers can be dropped. accept for verification only.                 |
 | Signature as trailer            |   | ❌ | Trailers can be dropped. accept for verification only.                 |
-| request digests                 | ✅ |   |                                                                        |
-| response digests                |   | ❌ | Tricky to support for signature use according to the spec              |
-| multiple digests                |   | ❌ |                                                                        |
-| digest: `sha-256`               |   | ❌ |                                                                        |
-| digest: `sha-512`               | ✅ | ❌ |                                                                        |
-| digest: `md5`                   |   | ❌ | Deprecated in the spec. Unlikely to be supported.                      |
-| digest: `sha`                   |   | ❌ | Deprecated in the spec. Unlikely to be supported.                      |
-| digest: `unixsum`               |   | ❌ |                                                                        |
-| digest: `unixcksum`             |   | ❌ |                                                                        |
-| digest: `id-sha-512`            |   | ❌ |                                                                        |
-| digest: `id-sha-256`            |   | ❌ |                                                                        |
-| custom digest formats           |   | ❌ |                                                                        |
+| multiple digests                | ✅ |   |                                                                        |
+| digest: `sha-256`               | ✅ |   |                                                                        |
+| digest: `sha-512`               | ✅ |   |                                                                        |
 
 ## Contributing
 
@@ -149,8 +138,8 @@ I would love your help!
 
 <!-- Other links -->
 [go]: https://golang.org
-[msgsig]: https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/
-[dighdr]: https://datatracker.ietf.org/doc/draft-ietf-httpbis-digest-headers/
+[msgsig]: https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html
+[dighdr]: https://www.ietf.org/archive/id/draft-ietf-httpbis-digest-headers-13.html
 [myblog]: https://repl.ca/modern-webhook-signatures/
 
 [godoc]: https://pkg.go.dev/github.com/offblocks/httpsig
