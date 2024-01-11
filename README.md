@@ -33,6 +33,37 @@ and the request path.
 
 ## Usage
 
+### Standalone Signing and Verification
+
+To sign a request, first instantiate a `Signer` using your preferred key and signing algorithm:
+
+```go
+// Create a signer
+signer := httpsig.NewSigner(httpsig.WithSignEcdsaP256Sha256("key1", privKey))
+
+// Create a request
+req, _ := http.NewRequest("GET", "https://some-url.com", nil)
+
+// Sign the request
+header, _ := signer.Sign(httpsig.MessageFromRequest(req))
+
+// Add the signature to the request
+req.Header = header
+```
+
+To verify a response, instantiate a `Verifier` using your preferred key and signing algorithm:
+
+```go
+// Receive a response from server
+resp, _ := client.Post("https://some-url.com", "application/json", &buf)
+
+// Create a verifier
+verifier := httpsig.NewVerifier(httpsig.WithVerifyEcdsaP256Sha256("key1", pubKey))
+
+// Verify the response
+err := verifier.Verify(httpsig.MessageFromResponse(resp))
+```
+
 ### Signing HTTP Requests in Clients
 
 To sign HTTP requests from a client, wrap an `http.Client`'s transport with
