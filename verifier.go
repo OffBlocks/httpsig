@@ -1,6 +1,33 @@
-// Copyright (c) 2021 James Bowes. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// BSD 3-Clause License
+
+// Copyright (c) 2021, James Bowes
+// Copyright (c) 2023, Alexander Taraymovich, OffBlocks
+// All rights reserved.
+
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package httpsig
 
@@ -20,6 +47,7 @@ import (
 	"github.com/dunglas/httpsfv"
 )
 
+// VerifyConfig is the configuration for a verifier
 type VerifyConfig struct {
 	// The keys to use for signing
 	Keys map[string]VerifyingKey
@@ -51,6 +79,43 @@ type VerifyConfig struct {
 	// for the verification to pass.
 	// Default: false
 	All bool
+}
+
+// VerifyingKey is the key to use for verifying a signature
+type VerifyingKey interface {
+	Verify(data []byte, signature []byte) error
+	GetKeyID() string
+	GetAlgorithm() Algorithm
+}
+
+// VerifyingKeyResolver is used to resolve a key id to a verifying key
+type VerifyingKeyResolver interface {
+	Resolve(keyID string) (VerifyingKey, error)
+}
+
+type Verifier struct {
+	*verifier
+}
+
+// NewVerifier creates a new verifier with the given options
+//
+// Use the `WithVerify*` option funcs to configure signature verification algorithms and verification
+// parameters.
+func NewVerifier(opts ...verifyOption) *Verifier {
+	v := verifier{}
+
+	v.config.Keys = make(map[string]VerifyingKey)
+
+	for _, o := range opts {
+		o.configureVerify(&v)
+	}
+
+	return &Verifier{&v}
+}
+
+// Verify verifies the given message
+func (v *Verifier) Verify(m *Message) error {
+	return v.verifier.Verify(m)
 }
 
 type clock interface {

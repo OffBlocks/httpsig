@@ -1,13 +1,35 @@
-// Copyright (c) 2021 James Bowes. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// BSD 3-Clause License
+
+// Copyright (c) 2021, James Bowes
+// Copyright (c) 2023, Alexander Taraymovich, OffBlocks
+// All rights reserved.
+
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package httpsig
-
-import (
-	"net/http"
-	"time"
-)
 
 const (
 	SignatureHeader      = "Signature"
@@ -15,19 +37,13 @@ const (
 	ContentDigestHeader  = "Content-Digest"
 )
 
-type Param string
-
-const (
-	ParamKeyID   Param = "keyid"
-	ParamAlg     Param = "alg"
-	ParamCreated Param = "created"
-	ParamExpires Param = "expires"
-	ParamNonce   Param = "nonce"
-	ParamTag     Param = "tag"
-)
-
-var defaultParams = []Param{ParamKeyID, ParamAlg, ParamCreated}
-
+// Algorithm is the signature algorithm to use. Available algorithms are:
+// - RSASSA-PKCS1-v1_5 using SHA-256 (rsa-v1_5-sha256)
+// - RSASSA-PSS using SHA-512 (rsa-pss-sha512)
+// - ECDSA using curve P-256 DSS and SHA-256 (ecdsa-p256-sha256)
+// - ECDSA using curve P-384 DSS and SHA-384 (ecdsa-p384-sha384)
+// - EdDSA using curve edwards25519 (ed25519)
+// - HMAC using SHA-256 (hmac-sha256)
 type Algorithm string
 
 const (
@@ -39,112 +55,12 @@ const (
 	AlgorithmHmacSha256        Algorithm = "hmac-sha256"
 )
 
+// DigestAlgorithm is the digest algorithm to use. Available algorithms are:
+// - SHA-256 (sha-256)
+// - SHA-512 (sha-512)
 type DigestAlgorithm string
 
 const (
 	DigestAlgorithmSha256 DigestAlgorithm = "sha-256"
 	DigestAlgorithmSha512 DigestAlgorithm = "sha-512"
 )
-
-type SigningKey interface {
-	Sign(data []byte) ([]byte, error)
-	GetKeyID() string
-	GetAlgorithm() Algorithm
-}
-
-// The signature parameters to include in signing
-type SignatureParameters struct {
-	// The created time for the signature. `nil` indicates not to populate the `created` time
-	// default: time.Now()
-	Created *time.Time
-
-	// The time the signature should be deemed to have expired
-	// default: time.Now() + 5 mins
-	Expires *time.Time
-
-	// A nonce for the request
-	Nonce *string
-
-	// The algorithm the signature is signed with (overrides the alg provided by the signing key)
-	Alg *Algorithm
-
-	// The key id the signature is signed with (overrides the keyid provided by the signing key)
-	KeyID *string
-
-	// A tag parameter for the signature
-	Tag *string
-}
-
-type Signer struct {
-	*signer
-}
-
-func NewSigner(opts ...signOption) *Signer {
-	s := signer{}
-
-	for _, o := range opts {
-		o.configureSign(&s)
-	}
-
-	if len(s.config.Params) == 0 {
-		s.config.Params = defaultParams[:]
-	}
-
-	return &Signer{&s}
-}
-
-func (s *Signer) Sign(m *Message) (http.Header, error) {
-	return s.signer.Sign(m)
-}
-
-type VerifyingKey interface {
-	Verify(data []byte, signature []byte) error
-	GetKeyID() string
-	GetAlgorithm() Algorithm
-}
-
-type VerifyingKeyResolver interface {
-	Resolve(keyID string) (VerifyingKey, error)
-}
-
-type Verifier struct {
-	*verifier
-}
-
-func NewVerifier(opts ...verifyOption) *Verifier {
-	v := verifier{}
-
-	v.config.Keys = make(map[string]VerifyingKey)
-
-	for _, o := range opts {
-		o.configureVerify(&v)
-	}
-
-	return &Verifier{&v}
-}
-
-func (v *Verifier) Verify(m *Message) error {
-	err := v.verifier.Verify(m)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-type Digestor struct {
-	*digestor
-}
-
-func NewDigestor(opts ...digestOption) *Digestor {
-	d := digestor{}
-
-	for _, o := range opts {
-		o.configureDigest(&d)
-	}
-
-	if len(d.config.Algorithms) == 0 {
-		d.config.Algorithms = []DigestAlgorithm{DigestAlgorithmSha256}
-	}
-
-	return &Digestor{&d}
-}

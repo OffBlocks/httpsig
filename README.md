@@ -33,6 +33,37 @@ and the request path.
 
 ## Usage
 
+### Standalone Signing and Verification
+
+To sign a request, first instantiate a `Signer` using your preferred key and signing algorithm:
+
+```go
+// Create a signer
+signer := httpsig.NewSigner(httpsig.WithSignEcdsaP256Sha256("key1", privKey))
+
+// Create a request
+req, _ := http.NewRequest("GET", "https://some-url.com", nil)
+
+// Sign the request
+header, _ := signer.Sign(httpsig.MessageFromRequest(req))
+
+// Add the signature to the request
+req.Header = header
+```
+
+To verify a response, instantiate a `Verifier` using your preferred key and signing algorithm:
+
+```go
+// Receive a response from server
+resp, _ := client.Post("https://some-url.com", "application/json", &buf)
+
+// Create a verifier
+verifier := httpsig.NewVerifier(httpsig.WithVerifyEcdsaP256Sha256("key1", pubKey))
+
+// Verify the response
+err := verifier.Verify(httpsig.MessageFromResponse(resp))
+```
+
 ### Signing HTTP Requests in Clients
 
 To sign HTTP requests from a client, wrap an `http.Client`'s transport with
@@ -119,7 +150,7 @@ computation is based on version `13` of [Digest Headers][dighdr]
 
 ## Contributing
 
-I would love your help!
+We would love your help!
 
 `httpsig` is still a work in progress. You can help by:
 
@@ -127,7 +158,6 @@ I would love your help!
 - Adding a feature or enhancement of your own! If it might be big, please
   [open an issue][enhancement] first so we can discuss it.
 - Improving this `README` or adding other documentation to `httpsig`.
-- Letting [me] know if you're using `httpsig`.
 
 <!-- These are mostly for pkg.go.dev, to show up in the header -->
 ## Links
@@ -146,5 +176,3 @@ I would love your help!
 [issues]: ./issues
 [bug]: ./issues/new?labels=bug
 [enhancement]: ./issues/new?labels=enhancement
-
-[me]: https://twitter.com/jrbowes
