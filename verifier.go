@@ -32,6 +32,7 @@
 package httpsig
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -90,7 +91,7 @@ type VerifyingKey interface {
 
 // VerifyingKeyResolver is used to resolve a key id to a verifying key
 type VerifyingKeyResolver interface {
-	Resolve(keyID string) (VerifyingKey, error)
+	Resolve(ctx context.Context, keyID string) (VerifyingKey, error)
 }
 
 type Verifier struct {
@@ -224,7 +225,7 @@ func (v *verifier) Verify(msg *Message) error {
 			if signatureParams.KeyID == nil {
 				return errMalformedSignature
 			}
-			key, err = v.config.KeyResolver.Resolve(*signatureParams.KeyID)
+			key, err = v.config.KeyResolver.Resolve(msg.Context, *signatureParams.KeyID)
 			if err != nil {
 				return err
 			}
