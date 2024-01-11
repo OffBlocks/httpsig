@@ -311,7 +311,12 @@ func (k *EcdsaP256SigningKey) Sign(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return append(r.Bytes(), s.Bytes()...), nil
+	rBytes := make([]byte, 32)
+	sBytes := make([]byte, 32)
+	r.FillBytes(rBytes)
+	s.FillBytes(sBytes)
+
+	return append(rBytes, sBytes...), nil
 }
 
 func (k *EcdsaP256SigningKey) GetKeyID() string {
@@ -340,7 +345,12 @@ func (k *EcdsaP384SigningKey) Sign(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return append(r.Bytes(), s.Bytes()...), nil
+	rBytes := make([]byte, 48)
+	sBytes := make([]byte, 48)
+	r.FillBytes(rBytes)
+	s.FillBytes(sBytes)
+
+	return append(rBytes, sBytes...), nil
 }
 
 func (k *EcdsaP384SigningKey) GetKeyID() string {

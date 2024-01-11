@@ -399,10 +399,11 @@ func (k *EcdsaP384VerifyingKey) Verify(data []byte, signature []byte) error {
 
 	bytes := hash.Sum(nil)
 
-	if len(signature) != 64 {
+	if len(signature) != 96 {
 		return errInvalidSignature
 	}
-	rBytes, sBytes := signature[:32], signature[32:]
+	rBytes, sBytes := signature[:48], signature[48:]
+
 	var r, s big.Int
 	r.SetBytes(rBytes)
 	s.SetBytes(sBytes)
