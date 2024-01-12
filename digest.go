@@ -34,6 +34,7 @@ package httpsig
 import (
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 
@@ -95,6 +96,41 @@ func (d *digestor) Digest(body []byte) (http.Header, error) {
 	hdr.Set(ContentDigestHeader, marshalled)
 
 	return hdr, nil
+}
+
+func (d *digestor) Verify(body []byte, header http.Header) error {
+	dict, err := httpsfv.UnmarshalDictionary(header.Values(ContentDigestHeader))
+	if err != nil {
+		return err
+	}
+
+	for _, algorithm := range d.config.Algorithms {
+		item, ok := dict.Get(string(algorithm))
+		if !ok {
+			continue
+		}
+
+		digest, err := calculateDigest(body, algorithm)
+		if err != nil {
+			return err
+		}
+
+		valueItem, ok := item.(httpsfv.Item)
+		if !ok {
+			return errors.New("invalid digest header")
+		}
+
+		value, ok := valueItem.Value.([]byte)
+		if !ok {
+			return errors.New("invalid digest header")
+		}
+
+		if subtle.ConstantTimeCompare([]byte(digest), []byte(value)) != 1 {
+			return errors.New("digest mismatch")
+		}
+	}
+
+	return nil
 }
 
 func calculateDigest(body []byte, algorithm DigestAlgorithm) ([]byte, error) {

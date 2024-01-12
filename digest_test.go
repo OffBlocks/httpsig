@@ -62,3 +62,120 @@ func TestDigest_SHA256(t *testing.T) {
 
 	assert.Equal(t, `sha-256=:RK/0qy18MlBSVnWgjwz6lZEWjP/lF5HF9bvEF8FabDg=:`, hdr.Get(ContentDigestHeader))
 }
+
+func TestVerify_SHA256(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
+
+func TestVerify_SHA512(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
+
+func TestDigest_SHA256_Verify_SHA256_SHA512(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+
+	d = NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
+
+func TestDigest_SHA256_SHA512_Verify_SHA256_SHA512(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+
+	d = NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
+
+func TestDigest_SHA256_SHA512_Verify_SHA256(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+
+	d = NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+	)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
+
+func TestDigest_SHA256_SHA512_Verify_SHA512(t *testing.T) {
+	body := []byte("{\"hello\": \"world\"}\n")
+
+	d := NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha256),
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	hdr, err := d.Digest(body)
+	assert.NoError(t, err)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+
+	d = NewDigestor(
+		WithDigestAlgorithms(DigestAlgorithmSha512),
+	)
+
+	err = d.Verify(body, hdr)
+	assert.NoError(t, err)
+}
