@@ -146,13 +146,19 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("path component not valid for responses")
 		}
-		return httpsfv.NewItem(message.URL.Path), nil
+		// empty path means use `/`
+		path := message.URL.Path
+		if path == "" || path[0] != '/' {
+			path = "/" + path
+		}
+		return httpsfv.NewItem(path), nil
 	case "@query":
 		// Section 2.2.7 covers canonicalisation of the query.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-query
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("query component not valid for responses")
 		}
+		// absent query params means use `?`
 		return httpsfv.NewItem("?" + message.URL.RawQuery), nil
 	case "@query-param":
 		// Section 2.2.8 covers canonicalisation of the query-param.
@@ -167,10 +173,19 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !ok {
 			return nil, errors.New("query-param must have a named parameter")
 		}
-		if !message.URL.Query().Has(name.(string)) {
+		decodedName, err := url.QueryUnescape(name.(string))
+		if err != nil {
+			return nil, fmt.Errorf("unable to decode query parameter name: %w", err)
+		}
+		query := message.URL.Query()
+		if !query.Has(decodedName) {
 			return nil, fmt.Errorf("expected query parameter \"%s\" not found", name)
 		}
-		return httpsfv.NewItem(message.URL.Query().Get(name.(string))), nil
+		decodedValue, err := url.QueryUnescape(query.Get(decodedName))
+		if err != nil {
+			return nil, fmt.Errorf("unable to decode query parameter value: %w", err)
+		}
+		return httpsfv.NewItem(url.QueryEscape(decodedValue)), nil
 	case "@status":
 		// Section 2.2.9 covers canonicalisation of the status.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-status-code
