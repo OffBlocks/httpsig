@@ -32,50 +32,1404 @@
 package httpsig
 
 import (
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
-	"encoding/base64"
-	"encoding/pem"
+	"fmt"
 	"net/http"
-	"net/url"
 	"testing"
-	"time"
 
+	"github.com/dunglas/httpsfv"
 	"github.com/stretchr/testify/assert"
 )
 
-// These tests come from the sample data in the draft standard.
-// Most of the signing tests aren't applicable, as the signatures contain some randomness.
-// B_*_* map to sections in the standard.
-
-func parse(in string) *url.URL {
-	out, err := url.Parse(in)
+func parseItem(s string) httpsfv.Item {
+	i, err := httpsfv.UnmarshalItem([]string{s})
 	if err != nil {
-		panic("couldn't parse static url for test!")
+		panic(err)
 	}
-	return out
+	return i
 }
 
-type testClock struct {
-	now time.Time
+func TestCanonicaliseComponent_UnboundComponents(t *testing.T) {
+	t.Run("derives @method component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("uppercase", func(t *testing.T) {
+			c, err := canonicaliseComponent("@method", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"GET"}, c)
+		})
+		t.Run("lowercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Method = "get"
+
+			c, err := canonicaliseComponent("@method", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"GET"}, c)
+		})
+	})
+	t.Run("derives @target-uri component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		c, err := canonicaliseComponent("@target-uri", httpsfv.NewParams(), MessageFromRequest(req))
+		assert.NoError(t, err)
+
+		assert.Equal(t, []string{"https://example.com/foo?param=Value&Pet=dog"}, c)
+	})
+	t.Run("derives @authority component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("with no port", func(t *testing.T) {
+			c, err := canonicaliseComponent("@authority", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("with port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Host = "example.com:8080"
+
+			c, err := canonicaliseComponent("@authority", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com:8080"}, c)
+		})
+		t.Run("with http default port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "http"
+			r.Host = "example.com:80"
+
+			c, err := canonicaliseComponent("@authority", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("with https default port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "https"
+			r.Host = "example.com:443"
+
+			c, err := canonicaliseComponent("@authority", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("uppercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Host = "EXAMPLE.COM"
+
+			c, err := canonicaliseComponent("@authority", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+	})
+	t.Run("derives @scheme component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("uppercase", func(t *testing.T) {
+			c, err := canonicaliseComponent("@scheme", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"https"}, c)
+		})
+		t.Run("lowercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "http"
+
+			c, err := canonicaliseComponent("@scheme", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"http"}, c)
+		})
+	})
+	t.Run("derives @request-target component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		c, err := canonicaliseComponent("@request-target", httpsfv.NewParams(), MessageFromRequest(req))
+		assert.NoError(t, err)
+
+		assert.Equal(t, []string{"/foo?param=Value&Pet=dog"}, c)
+	})
+	t.Run("derives @path component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("simple", func(t *testing.T) {
+			c, err := canonicaliseComponent("@path", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo"}, c)
+		})
+		t.Run("with query", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo?param=Value&Pet=dog")
+
+			c, err := canonicaliseComponent("@path", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo%20bar")
+
+			c, err := canonicaliseComponent("@path", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo%20bar"}, c)
+		})
+		t.Run("empty", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com")
+
+			c, err := canonicaliseComponent("@path", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/"}, c)
+		})
+	})
+	t.Run("derives @query component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("simple", func(t *testing.T) {
+			c, err := canonicaliseComponent("@query", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?param=Value&Pet=dog"}, c)
+		})
+		t.Run("empty", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo")
+
+			c, err := canonicaliseComponent("@query", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo?param=Value%20bar&Pet=dog")
+
+			c, err := canonicaliseComponent("@query", httpsfv.NewParams(), MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?param=Value%20bar&Pet=dog"}, c)
+		})
+	})
+	t.Run("derives @query-param component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "param")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"value"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "foo")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"bar"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "baz")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"batman"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "qux")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{""}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "var")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"this%20is%20a%20big%0Amultiline%20value"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "bar")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"with%20plus%20whitespace"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("name", "fa%C3%A7ade%22%3A%20")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromRequest(r))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"something"}, c)
+		})
+	})
+	t.Run("derives @status component", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request: &http.Request{
+				Header: http.Header{},
+			},
+		}
+
+		c, err := canonicaliseComponent("@status", httpsfv.NewParams(), MessageFromResponse(resp))
+		assert.NoError(t, err)
+
+		assert.Equal(t, []string{"200"}, c)
+	})
 }
 
-func (t *testClock) Now() time.Time {
-	return t.now
+func TestCanonicaliseComponent_Request_Response_BoundComponents(t *testing.T) {
+	t.Run("derives @method component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		t.Run("uppercase", func(t *testing.T) {
+			c, err := canonicaliseComponent("@method", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"GET"}, c)
+		})
+		t.Run("lowercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Method = "get"
+
+			c, err := canonicaliseComponent("@method", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"GET"}, c)
+		})
+	})
+	t.Run("derives @target-uri component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		c, err := canonicaliseComponent("@target-uri", params, MessageFromResponse(resp))
+		assert.NoError(t, err)
+
+		assert.Equal(t, []string{"https://example.com/foo?param=Value&Pet=dog"}, c)
+	})
+	t.Run("derives @authority component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		t.Run("with no port", func(t *testing.T) {
+			c, err := canonicaliseComponent("@authority", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("with port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Host = "example.com:8080"
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@authority", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com:8080"}, c)
+		})
+		t.Run("with http default port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "http"
+			r.Host = "example.com:80"
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@authority", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("with https default port", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "https"
+			r.Host = "example.com:443"
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@authority", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+		t.Run("uppercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.Host = "EXAMPLE.COM"
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@authority", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"example.com"}, c)
+		})
+	})
+	t.Run("derives @scheme component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		t.Run("uppercase", func(t *testing.T) {
+			c, err := canonicaliseComponent("@scheme", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"https"}, c)
+		})
+		t.Run("lowercase", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL.Scheme = "http"
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@scheme", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"http"}, c)
+		})
+	})
+	t.Run("derives @request-target component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		c, err := canonicaliseComponent("@request-target", params, MessageFromResponse(resp))
+		assert.NoError(t, err)
+
+		assert.Equal(t, []string{"/foo?param=Value&Pet=dog"}, c)
+	})
+	t.Run("derives @path component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		t.Run("simple", func(t *testing.T) {
+			c, err := canonicaliseComponent("@path", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo"}, c)
+		})
+		t.Run("with query", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo?param=Value&Pet=dog")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@path", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo%20bar")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@path", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/foo%20bar"}, c)
+		})
+		t.Run("empty", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@path", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"/"}, c)
+		})
+	})
+	t.Run("derives @query component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+		resp.Request = req
+
+		t.Run("simple", func(t *testing.T) {
+			c, err := canonicaliseComponent("@query", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?param=Value&Pet=dog"}, c)
+		})
+		t.Run("empty", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@query", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/foo?param=Value%20bar&Pet=dog")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@query", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"?param=Value%20bar&Pet=dog"}, c)
+		})
+	})
+	t.Run("derives @query-param component", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request:       req,
+		}
+
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "param")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"value"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "foo")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"bar"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "baz")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"batman"}, c)
+		})
+		t.Run("simple", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "qux")
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{""}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "var")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+			resp.Request = r
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"this%20is%20a%20big%0Amultiline%20value"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "bar")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"with%20plus%20whitespace"}, c)
+		})
+		t.Run("with encoded values", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("name", "fa%C3%A7ade%22%3A%20")
+			r := req.Clone(req.Context())
+			r.URL = parse("https://example.com/parameters?var=this%20is%20a%20big%0Amultiline%20value&bar=with+plus+whitespace&fa%C3%A7ade%22%3A%20=something")
+
+			c, err := canonicaliseComponent("@query-param", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+
+			assert.Equal(t, []string{"something"}, c)
+		})
+	})
 }
 
-func withClock(clock clock) verifyOption {
-	return &optImpl{
-		v: func(v *verifier) { v.clock = clock },
+func TestCanonicaliseComponent_ErrorConditions(t *testing.T) {
+	for _, tc := range []struct {
+		component string
+		response  http.Response
+	}{
+		{
+			"@method",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@target-uri",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@authority",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@scheme",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@request-target",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@path",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@query",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+		{
+			"@query-param",
+			http.Response{
+				StatusCode:    200,
+				Header:        http.Header{},
+				ContentLength: 18,
+				Request: &http.Request{
+					Header: http.Header{},
+				},
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("error for %s on response", tc.component), func(t *testing.T) {
+			_, err := canonicaliseComponent(tc.component, httpsfv.NewParams(), MessageFromResponse(&tc.response))
+			assert.Error(t, err)
+		})
 	}
+	t.Run("error for missing @query-param name", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		_, err := canonicaliseComponent("@query-param", httpsfv.NewParams(), MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error for missing @query-param", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		params := httpsfv.NewParams()
+		params.Add("name", "missing")
+		_, err := canonicaliseComponent("@query-param", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error for @status on request", func(t *testing.T) {
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        http.Header{},
+			ContentLength: 18,
+		}
+		_, err := canonicaliseComponent("@status", httpsfv.NewParams(), MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error for @status on response request", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode:    200,
+			Header:        http.Header{},
+			ContentLength: 18,
+			Request: &http.Request{
+				Header: http.Header{},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("req", true)
+
+		_, err := canonicaliseComponent("@status", params, MessageFromResponse(resp))
+		assert.Error(t, err)
+	})
 }
 
-func testReq() *http.Request {
-	return &http.Request{
+func TestCanonocaliseHeaders(t *testing.T) {
+	t.Run("general header extraction", func(t *testing.T) {
+		// headers are always in a canonical form
+		headers := http.Header{
+			"Testheader":    []string{"test"},
+			"Test-Header-1": []string{"test1"},
+			"Test-Header-2": []string{"test2"},
+			"Test-Header-3": []string{"test3"},
+			"Test-Header-4": []string{"test4"},
+		}
+		req := &http.Request{
+			Method:        "GET",
+			Host:          "example.com",
+			URL:           parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header:        headers,
+			ContentLength: 18,
+		}
+
+		for key, value := range map[string]string{
+			"testheader":    "test",
+			"test-header-1": "test1",
+			"Test-Header-2": "test2",
+			"test-Header-3": "test3",
+			"TEST-HEADER-4": "test4",
+		} {
+			t.Run(fmt.Sprintf("extracts %s", key), func(t *testing.T) {
+				c, err := canonicaliseHeader(key, httpsfv.NewParams(), MessageFromRequest(req))
+				assert.NoError(t, err)
+				assert.Equal(t, []string{value}, c)
+			})
+		}
+		t.Run("error on missing header", func(t *testing.T) {
+			_, err := canonicaliseHeader("missing", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.Error(t, err)
+		})
+	})
+	t.Run("raw headers", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":              []string{"www.example.com"},
+				"Date":              []string{"Tue, 20 Apr 2021 02:07:56 GMT"},
+				"X-Ows-Header":      []string{"  Leading and trailing whitespace.  "},
+				"X-Obs-Fold-Header": []string{"Obsolete\n    line folding."},
+				"Cache-Control":     []string{"max-age=60", "   must-revalidate"},
+				"Example-Dict":      []string{" a=1,    b=2;x=1;y=2,   c=(a   b   c)"},
+				"X-Empty-Header":    []string{""},
+			},
+			ContentLength: 18,
+		}
+
+		for key, value := range map[string][]string{
+			"host":              {"www.example.com"},
+			"date":              {"Tue, 20 Apr 2021 02:07:56 GMT"},
+			"x-ows-header":      {"Leading and trailing whitespace."},
+			"x-obs-fold-header": {"Obsolete line folding."},
+			"cache-control":     {"max-age=60", "must-revalidate"},
+			"example-dict":      {"a=1, b=2;x=1;y=2, c=(a b c)"},
+			"x-empty-header":    {""},
+		} {
+			t.Run(fmt.Sprintf("extracts %s", key), func(t *testing.T) {
+				c, err := canonicaliseHeader(key, httpsfv.NewParams(), MessageFromRequest(req))
+				assert.NoError(t, err)
+				assert.Equal(t, value, c)
+			})
+		}
+		t.Run("error on missing header", func(t *testing.T) {
+			_, err := canonicaliseHeader("missing", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.Error(t, err)
+		})
+	})
+	t.Run("sf header extraction", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":              []string{"www.example.com"},
+				"Date":              []string{"Tue, 20 Apr 2021 02:07:56 GMT"},
+				"X-Ows-Header":      []string{"  Leading and trailing whitespace.  "},
+				"X-Obs-Fold-Header": []string{"Obsolete\n    line folding."},
+				"Cache-Control":     []string{"max-age=60", "   must-revalidate"},
+				"Example-Dict":      []string{" a=1,    b=2;x=1;y=2,   c=(a   b   c)"},
+				"X-Empty-Header":    []string{""},
+			},
+			ContentLength: 18,
+		}
+		t.Run("extracts example-dict", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("sf", true)
+			c, err := canonicaliseHeader("example-dict", httpsfv.NewParams(), MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"a=1, b=2;x=1;y=2, c=(a b c)"}, c)
+		})
+	})
+	t.Run("key from structured header", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Example-Dict": []string{" a=1, b=2;x=1;y=2, c=(a   b    c), d"},
+			},
+			ContentLength: 18,
+		}
+		t.Run("extract integer key", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("key", "a")
+			c, err := canonicaliseHeader("example-dict", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"1"}, c)
+		})
+		t.Run("extract boolean key", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("key", "d")
+			c, err := canonicaliseHeader("example-dict", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"?1"}, c)
+		})
+		t.Run("extract parameters", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("key", "b")
+			c, err := canonicaliseHeader("example-dict", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"2;x=1;y=2"}, c)
+		})
+		t.Run("extract inner list", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("key", "c")
+			c, err := canonicaliseHeader("example-dict", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"(a b c)"}, c)
+		})
+	})
+	t.Run("bs from structured header", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":           []string{"www.example.com"},
+				"Example-Header": []string{"value, with, lots", "of, commas"},
+			},
+			ContentLength: 18,
+		}
+		t.Run("encodes multiple headers separately", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("bs", true)
+			c, err := canonicaliseHeader("example-header", params, MessageFromRequest(req))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{":dmFsdWUsIHdpdGgsIGxvdHM=:", ":b2YsIGNvbW1hcw==:"}, c)
+		})
+		t.Run("encodes single header", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("bs", true)
+			r := req.Clone(req.Context())
+			r.Header.Set("Example-Header", "value, with, lots, of, commas")
+
+			c, err := canonicaliseHeader("example-header", params, MessageFromRequest(r))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{":dmFsdWUsIHdpdGgsIGxvdHMsIG9mLCBjb21tYXM=:"}, c)
+		})
+	})
+	t.Run("request-response bound header", func(t *testing.T) {
+		/*
+
+		   const response: Response = {
+		       status: 503,
+		       headers: {
+		           'Date': 'Tue, 20 Apr 2021 02:07:56 GMT',
+		           'Content-Type': 'application/json',
+		           'Content-Length': '62',
+		       },
+		   };
+		*/
+		req := &http.Request{
+			Method: "POST",
+			Host:   "example.com",
+			URL:    parse("https://example.com/foo?param=Value&Pet=dog"),
+			Header: http.Header{
+				"Host":            []string{"www.example.com"},
+				"Date":            []string{"Tue, 20 Apr 2021 02:07:55 GMT"},
+				"Content-Type":    []string{"application/json"},
+				"Content-Digest":  []string{"sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"},
+				"Content-Length":  []string{"18"},
+				"Signature-Input": []string{"sig1=('@method' '@authority' '@path' 'content-digest' 'content-length' 'content-type');created=1618884475;keyid='test-key-rsa-pss'"},
+				"Signature":       []string{"sig1=:LAH8BjcfcOcLojiuOBFWn0P5keD3xAOuJRGziCLuD8r5MW9S0RoXXLzLSRfGY/3SF8kVIkHjE13SEFdTo4Af/fJ/Pu9wheqoLVdwXyY/UkBIS1M8Brc8IODsn5DFIrG0IrburbLi0uCc+E2ZIIb6HbUJ+o+jP58JelMTe0QE3IpWINTEzpxjqDf5/Df+InHCAkQCTuKsamjWXUpyOT1Wkxi7YPVNOjW4MfNuTZ9HdbD2Tr65+BXeTG9ZS/9SWuXAc+BZ8WyPz0QRz//ec3uWXd7bYYODSjRAxHqX+S1ag3LZElYyUKaAIjZ8MGOt4gXEwCSLDv/zqxZeWLj/PDkn6w==:"},
+			},
+		}
+		resp := &http.Response{
+			StatusCode: 503,
+			Header: http.Header{
+				"Date":           []string{"Tue, 20 Apr 2021 02:07:56 GMT"},
+				"Content-Type":   []string{"application/json"},
+				"Content-Length": []string{"62"},
+			},
+			Request: req,
+		}
+		t.Run("binds requests and responses", func(t *testing.T) {
+			params := httpsfv.NewParams()
+			params.Add("req", true)
+			params.Add("key", "sig1")
+
+			c, err := canonicaliseHeader("signature", params, MessageFromResponse(resp))
+			assert.NoError(t, err)
+			assert.Equal(t, []string{":LAH8BjcfcOcLojiuOBFWn0P5keD3xAOuJRGziCLuD8r5MW9S0RoXXLzLSRfGY/3SF8kVIkHjE13SEFdTo4Af/fJ/Pu9wheqoLVdwXyY/UkBIS1M8Brc8IODsn5DFIrG0IrburbLi0uCc+E2ZIIb6HbUJ+o+jP58JelMTe0QE3IpWINTEzpxjqDf5/Df+InHCAkQCTuKsamjWXUpyOT1Wkxi7YPVNOjW4MfNuTZ9HdbD2Tr65+BXeTG9ZS/9SWuXAc+BZ8WyPz0QRz//ec3uWXd7bYYODSjRAxHqX+S1ag3LZElYyUKaAIjZ8MGOt4gXEwCSLDv/zqxZeWLj/PDkn6w==:"}, c)
+		})
+	})
+}
+
+func TestCanonocaliseHeaders_ErrorConditions(t *testing.T) {
+	t.Run("error if both bs/sf params provided", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Structured":   []string{"test=123"},
+				"Content-Type": []string{"application/json"},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("sf", true)
+		params.Add("bs", true)
+
+		_, err := canonicaliseHeader("structured", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error if both bs and implicit sf params provided", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Structured":   []string{"test=123"},
+				"Content-Type": []string{"application/json"},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("bs", true)
+		params.Add("key", "val")
+
+		_, err := canonicaliseHeader("structured", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error if sf params provided for non structured field", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Date":         []string{"Tue, 20 Apr 2021 02:07:55 GMT"},
+				"Structured":   []string{"test=123"},
+				"Content-Type": []string{"application/json"},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("sf", true)
+		params.Add("key", "val")
+
+		_, err := canonicaliseHeader("date", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error if sf params provided for non dictionary", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Notadict":     []string{"(a b c)"},
+				"Content-Type": []string{"application/json"},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("sf", true)
+		params.Add("key", "val")
+
+		_, err := canonicaliseHeader("notadict", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+	t.Run("error if key is missing for structured field", func(t *testing.T) {
+		req := &http.Request{
+			Method: "GET",
+			Host:   "example.com",
+			URL:    parse("https://example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host":         []string{"www.example.com"},
+				"Structured":   []string{"test=123"},
+				"Content-Type": []string{"application/json"},
+			},
+		}
+		params := httpsfv.NewParams()
+		params.Add("key", "val")
+
+		_, err := canonicaliseHeader("structured", params, MessageFromRequest(req))
+		assert.Error(t, err)
+	})
+}
+
+func TestCreateSignatureBase_Headers(t *testing.T) {
+	t.Run("header fields", func(t *testing.T) {
+		req := &http.Request{
+			Method: "POST",
+			URL:    parse("https://www.example.com/"),
+			Header: http.Header{
+				"Host":                  []string{"www.example.com"},
+				"Date":                  []string{"Tue, 20 Apr 2021 02:07:56 GMT"},
+				"X-Ows-Header":          []string{"  Leading and trailing whitespace.  "},
+				"X-Obs-Fold-Header":     []string{"Obsolete\n    line folding."},
+				"Cache-Control":         []string{"max-age=60", "   must-revalidate"},
+				"Example-Dict":          []string{" a=1,    b=2;x=1;y=2,   c=(a   b   c), d"},
+				"Example-Header":        []string{"value, with, lots", "of, commas"},
+				"Example-Header-Single": []string{"value, with, lots, of, commas"},
+				"X-Empty-Header":        []string{""},
+			},
+		}
+		for _, tc := range []struct {
+			name   string
+			fields []string
+			expect []signatureItem
+		}{
+			{
+				"creates a signature base from raw headers",
+				[]string{
+					"host",
+					"date",
+					"x-ows-header",
+					"x-obs-fold-header",
+					"cache-control",
+					"example-dict",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("host"), []string{"www.example.com"}},
+					{httpsfv.NewItem("date"), []string{"Tue, 20 Apr 2021 02:07:56 GMT"}},
+					{httpsfv.NewItem("x-ows-header"), []string{"Leading and trailing whitespace."}},
+					{httpsfv.NewItem("x-obs-fold-header"), []string{"Obsolete line folding."}},
+					{httpsfv.NewItem("cache-control"), []string{"max-age=60", "must-revalidate"}},
+					{httpsfv.NewItem("example-dict"), []string{"a=1, b=2;x=1;y=2, c=(a b c), d"}},
+				},
+			},
+			{
+				"extracts an empty header",
+				[]string{
+					"x-empty-header",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("x-empty-header"), []string{""}},
+				},
+			},
+			{
+				"extracts strict formatted headers",
+				[]string{
+					"example-dict;sf",
+				},
+				[]signatureItem{
+					{parseItem(`"example-dict";sf`), []string{"a=1, b=2;x=1;y=2, c=(a b c), d"}},
+				},
+			},
+			{
+				"extracts keys from dictionary headers",
+				[]string{
+					`example-dict;key="a"`,
+					`example-dict;key="d"`,
+					`example-dict;key="b"`,
+					`example-dict;key="c"`,
+				},
+				[]signatureItem{
+					{parseItem(`"example-dict";key="a"`), []string{"1"}},
+					{parseItem(`"example-dict";key="d"`), []string{"?1"}},
+					{parseItem(`"example-dict";key="b"`), []string{"2;x=1;y=2"}},
+					{parseItem(`"example-dict";key="c"`), []string{"(a b c)"}},
+				},
+			},
+			{
+				"extracts binary formatted headers split",
+				[]string{
+					"example-header;bs",
+				},
+				[]signatureItem{
+					{parseItem(`"example-header";bs`), []string{":dmFsdWUsIHdpdGgsIGxvdHM=:", ":b2YsIGNvbW1hcw==:"}},
+				},
+			},
+			{
+				"extracts binary formatted headers single",
+				[]string{
+					"example-header-single;bs",
+				},
+				[]signatureItem{
+					{parseItem(`"example-header-single";bs`), []string{":dmFsdWUsIHdpdGgsIGxvdHMsIG9mLCBjb21tYXM=:"}},
+				},
+			},
+			{
+				"ignores @signature-params component",
+				[]string{
+					"host",
+					"date",
+					"x-ows-header",
+					"x-obs-fold-header",
+					"cache-control",
+					"example-dict",
+					"@signature-params",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("host"), []string{"www.example.com"}},
+					{httpsfv.NewItem("date"), []string{"Tue, 20 Apr 2021 02:07:56 GMT"}},
+					{httpsfv.NewItem("x-ows-header"), []string{"Leading and trailing whitespace."}},
+					{httpsfv.NewItem("x-obs-fold-header"), []string{"Obsolete line folding."}},
+					{httpsfv.NewItem("cache-control"), []string{"max-age=60", "must-revalidate"}},
+					{httpsfv.NewItem("example-dict"), []string{"a=1, b=2;x=1;y=2, c=(a b c), d"}},
+				},
+			},
+			{
+				"ignores @signature-params component with arbitrary params",
+				[]string{
+					"host",
+					"date",
+					"x-ows-header",
+					"x-obs-fold-header",
+					"cache-control",
+					"example-dict",
+					`@signature-params;test=:AAA=:;test2=test`,
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("host"), []string{"www.example.com"}},
+					{httpsfv.NewItem("date"), []string{"Tue, 20 Apr 2021 02:07:56 GMT"}},
+					{httpsfv.NewItem("x-ows-header"), []string{"Leading and trailing whitespace."}},
+					{httpsfv.NewItem("x-obs-fold-header"), []string{"Obsolete line folding."}},
+					{httpsfv.NewItem("cache-control"), []string{"max-age=60", "must-revalidate"}},
+					{httpsfv.NewItem("example-dict"), []string{"a=1, b=2;x=1;y=2, c=(a b c), d"}},
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c, err := createSignatureBase(tc.fields, MessageFromRequest(req))
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expect, c)
+			})
+		}
+	})
+}
+
+func TestCreateSignatureBase_DerivedComponents(t *testing.T) {
+	t.Run("derived components", func(t *testing.T) {
+		req := &http.Request{
+			Method: "POST",
+			Host:   "www.example.com",
+			URL:    parse("https://www.example.com/path?param=value&foo=bar&baz=batman&qux="),
+			Header: http.Header{
+				"Host": []string{"www.example.com"},
+			},
+		}
+		for _, tc := range []struct {
+			name   string
+			fields []string
+			expect []signatureItem
+		}{
+			{
+				"derives @method",
+				[]string{
+					"@method",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@method"), []string{"POST"}},
+				},
+			},
+			{
+				"derives @target-uri",
+				[]string{
+					"@target-uri",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@target-uri"), []string{"https://www.example.com/path?param=value&foo=bar&baz=batman&qux="}},
+				},
+			},
+			{
+				"derives @authority",
+				[]string{
+					"@authority",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@authority"), []string{"www.example.com"}},
+				},
+			},
+			{
+				"derives @scheme",
+				[]string{
+					"@scheme",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@scheme"), []string{"https"}},
+				},
+			},
+			{
+				"derives @request-target",
+				[]string{
+					"@request-target",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@request-target"), []string{"/path?param=value&foo=bar&baz=batman&qux="}},
+				},
+			},
+			{
+				"derives @path",
+				[]string{
+					"@path",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@path"), []string{"/path"}},
+				},
+			},
+			{
+				"derives @query",
+				[]string{
+					"@query",
+				},
+				[]signatureItem{
+					{httpsfv.NewItem("@query"), []string{"?param=value&foo=bar&baz=batman&qux="}},
+				},
+			},
+			{
+				"derives @query-param",
+				[]string{
+					`@query-param;name="baz"`, // name is required
+				},
+				[]signatureItem{
+					{parseItem(`"@query-param";name="baz"`), []string{"batman"}},
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c, err := createSignatureBase(tc.fields, MessageFromRequest(req))
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expect, c)
+			})
+		}
+	})
+	t.Run("derives @status", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{},
+			Request: &http.Request{
+				Header: http.Header{},
+			},
+		}
+		c, err := createSignatureBase([]string{"@status"}, MessageFromResponse(resp))
+		assert.NoError(t, err)
+		assert.Equal(t, []signatureItem{
+			{httpsfv.NewItem("@status"), []string{"200"}},
+		}, c)
+	})
+}
+
+func TestCreateSignatureBase_FullExample(t *testing.T) {
+	req := &http.Request{
 		Method: "POST",
 		Host:   "example.com",
 		URL:    parse("https://example.com/foo?param=Value&Pet=dog"),
@@ -86,735 +1440,145 @@ func testReq() *http.Request {
 			"Content-Digest": []string{"sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"},
 			"Content-Length": []string{"18"},
 		},
-		ContentLength: 18,
 	}
+	t.Run("produces a signature base for a request", func(t *testing.T) {
+		c, err := createSignatureBase([]string{
+			"@method",
+			"@authority",
+			"@path",
+			"content-digest",
+			"content-length",
+			"content-type",
+		}, MessageFromRequest(req))
+		assert.NoError(t, err)
+		assert.Equal(t, []signatureItem{
+			{httpsfv.NewItem("@method"), []string{"POST"}},
+			{httpsfv.NewItem("@authority"), []string{"example.com"}},
+			{httpsfv.NewItem("@path"), []string{"/foo"}},
+			{httpsfv.NewItem("content-digest"), []string{"sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"}},
+			{httpsfv.NewItem("content-length"), []string{"18"}},
+			{httpsfv.NewItem("content-type"), []string{"application/json"}},
+		}, c)
+	})
 }
 
-func testResp() *http.Response {
-	req := testReq()
-	return &http.Response{
-		Request:    req,
-		StatusCode: 200,
-		Header: http.Header{
-			"Date":           []string{"Tue, 20 Apr 2021 02:07:56 GMT"},
-			"Content-Type":   []string{"application/json"},
-			"Content-Digest": []string{"sha-512=:mEWXIS7MaLRuGgxOBdODa3xqM1XdEvxoYhvlCFJ41QJgJc4GTsPp29l5oGX69wWdXymyU0rjJuahq4l5aGgfLQ==:"},
-			"Content-Length": []string{"23"},
-		},
-		ContentLength: 18,
-	}
+func TestFormatSignatureBase(t *testing.T) {
+	t.Run("formats @method", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@method"), []string{"POST"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@method": POST`, f)
+	})
+	t.Run("derives @target-uri", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@target-uri"), []string{"https://www.example.com/path?param=value"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@target-uri": https://www.example.com/path?param=value`, f)
+	})
+	t.Run("derives @authority", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@authority"), []string{"www.example.com"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@authority": www.example.com`, f)
+	})
+	t.Run("derives @scheme", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@scheme"), []string{"https"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@scheme": https`, f)
+	})
+	t.Run("derives @request-target", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@request-target"), []string{"/path?param=value"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@request-target": /path?param=value`, f)
+	})
+	t.Run("derives @path", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@path"), []string{"/path"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@path": /path`, f)
+	})
+	t.Run("derives @query", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@query"), []string{"?param=value&foo=bar&baz=batman"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query": ?param=value&foo=bar&baz=batman`, f)
+		c = []signatureItem{
+			{httpsfv.NewItem("@query"), []string{"?queryString"}},
+		}
+		f, err = formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query": ?queryString`, f)
+		c = []signatureItem{
+			{httpsfv.NewItem("@query"), []string{"?"}},
+		}
+		f, err = formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query": ?`, f)
+	})
+	t.Run("derives @query-param", func(t *testing.T) {
+		c := []signatureItem{
+			{parseItem(`"@query-param";name="baz"`), []string{"batman"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query-param";name="baz": batman`, f)
+		c = []signatureItem{
+			{parseItem(`"@query-param";name="qux"`), []string{""}},
+		}
+		f, err = formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query-param";name="qux": `, f)
+		c = []signatureItem{
+			{parseItem(`"@query-param";name="param"`), []string{"value"}},
+		}
+		f, err = formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@query-param";name="param": value`, f)
+	})
+	t.Run("derives @status", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("@status"), []string{"200"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"@status": 200`, f)
+	})
+	t.Run("formats many headers", func(t *testing.T) {
+		c := []signatureItem{
+			{httpsfv.NewItem("host"), []string{"www.example.com"}},
+			{httpsfv.NewItem("date"), []string{"Tue, 20 Apr 2021 02:07:56 GMT"}},
+			{httpsfv.NewItem("x-ows-header"), []string{"Leading and trailing whitespace."}},
+			{httpsfv.NewItem("x-obs-fold-header"), []string{"Obsolete line folding."}},
+			{httpsfv.NewItem("cache-control"), []string{"max-age=60", "must-revalidate"}},
+			{httpsfv.NewItem("example-dict"), []string{"a=1,    b=2;x=1;y=2,   c=(a   b   c)"}},
+			{httpsfv.NewItem("x-empty-header"), []string{""}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"host": www.example.com`+"\n"+`"date": Tue, 20 Apr 2021 02:07:56 GMT`+"\n"+`"x-ows-header": Leading and trailing whitespace.`+"\n"+`"x-obs-fold-header": Obsolete line folding.`+"\n"+`"cache-control": max-age=60, must-revalidate`+"\n"+`"example-dict": a=1,    b=2;x=1;y=2,   c=(a   b   c)`+"\n"+`"x-empty-header": `, f)
+	})
+	t.Run("formats strict formatted headers", func(t *testing.T) {
+		c := []signatureItem{
+			{parseItem(`"example-dict";sf`), []string{"a=1, b=2;x=1;y=2, c=(a b c)"}},
+		}
+		f, err := formatSignatureBase(c)
+		assert.NoError(t, err)
+		assert.Equal(t, `"example-dict";sf: a=1, b=2;x=1;y=2, c=(a b c)`, f)
+	})
 }
-
-func TestSign_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, block, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(block.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	if err != nil {
-		assert.NoError(t, err, "could not decode test private key")
-	}
-
-	created := time.Unix(1618884473, 0)
-	nonce := "b3k2pp5k7z-50gnwp.yemd"
-	s := NewSigner(
-		WithSignName("sig-b21"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-			ParamNonce,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-			Nonce:   &nonce,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b21=();created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pk),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig-b21=();created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd"`)
-	req.Header.Set("Signature", `sig-b21=:d2pmTvmbncD3xQm8E9ZV2828BjQWGgiwAaw5bAkgibUopemLJcWDy/lkbbHAve4cRAtx31Iq786U7it++wgGxbtRxf8Udx7zFZsckzXaJMkA7ChG52eSkFxykJeNqsrWH5S+oxNFlD4dzVuwe8DhTSja8xxbR/Z2cOGdCbzR72rgFWhzx2VjBqJzsPLMIQKhO4DGezXehhWwE56YCE+O6c0mKZsfxVrogUvA4HELjVKWmAvtl6UnCh8jYzuVG5WSb/QEVPnP5TmcAnLH1g+s++v6d4s8m0gCw1fV5/SITLq9mhho8K3+7EPYTU8IU1bLhdxO5Nyt8C8ssinQ98Xw9Q==:`)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestRoundtrip_RSA_PSS_SHA_512_Minimal_B_2_1(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(blockPrivate.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	nonce := "b3k2pp5k7z-50gnwp.yemd"
-	s := NewSigner(
-		WithSignName("sig-b21"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-			ParamNonce,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-			Nonce:   &nonce,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-	req.Header = hdr
-
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pkpub := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pkpub),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestSign_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, block, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(block.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	nonce := "b3k2pp5k7z-50gnwp.yemd"
-	tag := "header-example"
-	s := NewSigner(
-		WithSignName("sig-b22"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-			ParamNonce,
-			ParamTag,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-			Nonce:   &nonce,
-			Tag:     &tag,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-		WithSignFields("@authority", "content-digest", "@query-param;name=\"Pet\""),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b22=("@authority" "content-digest" "@query-param";name="Pet");created=1618884473;keyid="test-key-rsa-pss";nonce="b3k2pp5k7z-50gnwp.yemd";tag="header-example"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pk),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig-b22=("@authority" "content-digest" "@query-param";name="Pet");created=1618884473;keyid="test-key-rsa-pss";tag="header-example"`)
-	req.Header.Set("Signature", `sig-b22=:LjbtqUbfmvjj5C5kr1Ugj4PmLYvx9wVjZvD9GsTT4F7GrcQEdJzgI9qHxICagShLRiLMlAJjtq6N4CDfKtjvuJyE5qH7KT8UCMkSowOB4+ECxCmT8rtAmj/0PIXxi0A0nxKyB09RNrCQibbUjsLS/2YyFYXEu4TRJQzRw1rLEuEfY17SARYhpTlaqwZVtR8NV7+4UKkjqpcAoFqWFQh62s7Cl+H2fjBSpqfZUJcsIk4N6wiKYd4je2U/lankenQ99PZfB4jY3I5rSV2DSBVkSFsURIjYErOs0tFTQosMTAoxk//0RoKUqiYY8Bh0aaUEb0rQl3/XaVe4bXTugEjHSw==:`)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestRoundtrip_RSA_PSS_SHA_512_Selective_B_2_2(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(blockPrivate.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	nonce := "b3k2pp5k7z-50gnwp.yemd"
-	tag := "header-example"
-	s := NewSigner(
-		WithSignName("sig-b22"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-			ParamNonce,
-			ParamTag,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-			Nonce:   &nonce,
-			Tag:     &tag,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-		WithSignFields("@authority", "content-digest", "@query-param;name=\"Pet\""),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-	req.Header = hdr
-
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pkpub := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pkpub),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestSign_RSA_PSS_SHA_512_Full_Coverage_B_2_3(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, block, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(block.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b23"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-		WithSignFields("date", "@method", "@path", "@query", "@authority", "content-type", "content-digest", "content-length"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b23=("date" "@method" "@path" "@query" "@authority" "content-type" "content-digest" "content-length");created=1618884473;keyid="test-key-rsa-pss"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_RSA_PSS_SHA_512_Full_Coverage_B_2_3(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pk := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pk),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig-b23=("date" "@method" "@path" "@query" "@authority" "content-type" "content-digest" "content-length");created=1618884473;keyid="test-key-rsa-pss"`)
-	req.Header.Set("Signature", `sig-b23=:bbN8oArOxYoyylQQUU6QYwrTuaxLwjAC9fbY2F6SVWvh0yBiMIRGOnMYwZ/5MR6fb0Kh1rIRASVxFkeGt683+qRpRRU5p2voTp768ZrCUb38K0fUxN0O0iC59DzYx8DFll5GmydPxSmme9v6ULbMFkl+V5B1TP/yPViV7KsLNmvKiLJH1pFkh/aYA2HXXZzNBXmIkoQoLd7YfW91kE9o/CCoC1xMy7JA1ipwvKvfrs65ldmlu9bpG6A9BmzhuzF8Eim5f8ui9eH8LZH896+QIF61ka39VBrohr9iyMUJpvRX2Zbhl5ZJzSRxpJyoEZAFL2FUo5fTIztsDZKEgM4cUA==:`)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestRoundtrip_RSA_PSS_SHA_512_Full_Coverage_B_2_3(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyRSAPSS))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	// taken from crypto/x509/pkcs8.go
-	type pkcs8 struct {
-		Version    int
-		Algo       pkix.AlgorithmIdentifier
-		PrivateKey []byte
-		// optional attributes omitted.
-	}
-	var privKey pkcs8
-	if _, err := asn1.Unmarshal(blockPrivate.Bytes, &privKey); err != nil {
-		assert.NoError(t, err, "could not decode test private key pem")
-	}
-
-	pk, err := x509.ParsePKCS1PrivateKey(privKey.PrivateKey)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b23"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignRsaPssSha512("test-key-rsa-pss", pk),
-		WithSignFields("date", "@method", "@path", "@query", "@authority", "content-type", "content-digest", "content-length"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-	req.Header = hdr
-
-	block, _ := pem.Decode([]byte(testKeyRSAPSSPub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pkpub := pki.(*rsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyRsaPssSha512("test-key-rsa-pss", pkpub),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestSign_ECDSA_P256_SHA256_B_2_4(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyECCP256))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	pk, err := x509.ParseECPrivateKey(blockPrivate.Bytes)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b24"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignEcdsaP256Sha256("test-key-ecc-p256", pk),
-		WithSignFields("@status", "content-type", "content-digest", "content-length"),
-	)
-
-	resp := testResp()
-	hdr, err := s.Sign(MessageFromResponse(resp))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b24=("@status" "content-type" "content-digest" "content-length");created=1618884473;keyid="test-key-ecc-p256"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_ECDSA_P256_SHA256_B_2_4(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyECCP256Pub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pk := pki.(*ecdsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyEcdsaP256Sha256("test-key-ecc-p256", pk),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	resp := testResp()
-	resp.Header.Set("Signature-Input", `sig-b24=("@status" "content-type" "content-digest" "content-length");created=1618884473;keyid="test-key-ecc-p256"`)
-	resp.Header.Set("Signature", `sig-b24=:wNmSUAhwb5LxtOtOpNa6W5xj067m5hFrj0XQ4fvpaCLx0NKocgPquLgyahnzDnDAUy5eCdlYUEkLIj+32oiasw==:`)
-
-	assert.NoError(t, v.Verify(MessageFromResponse(resp)), "verification failed")
-}
-
-func TestRoundtrip_ECDSA_P256_SHA256_B_2_4(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyECCP256))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	pk, err := x509.ParseECPrivateKey(blockPrivate.Bytes)
-	assert.NoError(t, err, "could not decode test private key")
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b24"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignEcdsaP256Sha256("test-key-ecc-p256", pk),
-		WithSignFields("@status", "content-type", "content-digest", "content-length"),
-	)
-
-	resp := testResp()
-	hdr, err := s.Sign(MessageFromResponse(resp))
-	assert.NoError(t, err, "signing failed")
-	resp.Header = hdr
-
-	block, _ := pem.Decode([]byte(testKeyECCP256Pub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pkpub := pki.(*ecdsa.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyEcdsaP256Sha256("test-key-ecc-p256", pkpub),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromResponse(resp)), "verification failed")
-}
-
-func TestSign_HMAC_SHA_256_B_2_5(t *testing.T) {
-	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
-	if err != nil {
-		panic("could not decode test shared secret")
-	}
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b25"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithHmacSha256("test-shared-secret", k),
-		WithSignFields("date", "@authority", "content-type"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b25=("date" "@authority" "content-type");created=1618884473;keyid="test-shared-secret"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_HMAC_SHA_256_B_2_5(t *testing.T) {
-	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
-	if err != nil {
-		panic("could not decode test shared secret")
-	}
-
-	v := NewVerifier(
-		WithHmacSha256("test-shared-secret", k),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig-b25=("date" "@authority" "content-type");created=1618884473;keyid="test-shared-secret"`)
-	req.Header.Set("Signature", `sig-b25=:pxcQw6G3AjtMBQjwo8XzkZf/bws5LelbaMk5rGIGtE8=:`)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestRoundtrip_HMAC_SHA_256_B_2_5(t *testing.T) {
-	k, err := base64.StdEncoding.DecodeString(testSharedSecret)
-	if err != nil {
-		panic("could not decode test shared secret")
-	}
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b25"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithHmacSha256("test-shared-secret", k),
-		WithSignFields("date", "@authority", "content-type"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-	req.Header = hdr
-
-	v := NewVerifier(
-		WithHmacSha256("test-shared-secret", k),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestSign_ED25519_B_2_6(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyEd25519))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	pki, err := x509.ParsePKCS8PrivateKey(blockPrivate.Bytes)
-	assert.NoError(t, err, "could not decode test private key")
-
-	pk := pki.(ed25519.PrivateKey)
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b26"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignEd25519("test-key-ed25519", pk),
-		WithSignFields("date", "@method", "@path", "@authority", "content-type", "content-length"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-
-	assert.Equal(t, `sig-b26=("date" "@method" "@path" "@authority" "content-type" "content-length");created=1618884473;keyid="test-key-ed25519"`, hdr.Get("Signature-Input"), "signature input did not match")
-
-	// can't verify signature as it is randomised
-}
-
-func TestVerify_ED25519_B_2_6(t *testing.T) {
-	block, _ := pem.Decode([]byte(testKeyEd25519Pub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err := x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pk := pki.(ed25519.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyEd25519("test-key-ed25519", pk),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	req := testReq()
-	req.Header.Set("Signature-Input", `sig-b26=("date" "@method" "@path" "@authority" "content-type" "content-length");created=1618884473;keyid="test-key-ed25519"`)
-	req.Header.Set("Signature", `sig-b26=:wqcAqbmYJ2ji2glfAMaRy4gruYYnx2nEFN2HN6jrnDnQCK1u02Gb04v9EDgwUPiu4A0w6vuQv5lIp5WPpBKRCw==:`)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-func TestRoundtrip_ED25519_B_2_6(t *testing.T) {
-	blockPrivate, _ := pem.Decode([]byte(testKeyEd25519))
-	assert.NotNil(t, blockPrivate, "could not decode test private key pem")
-
-	pki, err := x509.ParsePKCS8PrivateKey(blockPrivate.Bytes)
-	assert.NoError(t, err, "could not decode test private key")
-
-	pk := pki.(ed25519.PrivateKey)
-
-	created := time.Unix(1618884473, 0)
-	s := NewSigner(
-		WithSignName("sig-b26"),
-		WithSignParams(
-			ParamCreated,
-			ParamKeyID,
-		),
-		WithSignParamValues(&SignatureParameters{
-			Created: &created,
-		}),
-		WithSignEd25519("test-key-ed25519", pk),
-		WithSignFields("date", "@method", "@path", "@authority", "content-type", "content-length"),
-	)
-
-	req := testReq()
-	hdr, err := s.Sign(MessageFromRequest(req))
-	assert.NoError(t, err, "signing failed")
-	req.Header = hdr
-
-	block, _ := pem.Decode([]byte(testKeyEd25519Pub))
-	assert.NotNil(t, block, "could not decode test public key pem")
-
-	pki, err = x509.ParsePKIXPublicKey(block.Bytes)
-	assert.NoError(t, err, "could not decode test public key")
-
-	pkpub := pki.(ed25519.PublicKey)
-
-	v := NewVerifier(
-		WithVerifyEd25519("test-key-ed25519", pkpub),
-		withClock(&testClock{now: time.Unix(1618884473, 0)}),
-	)
-
-	assert.NoError(t, v.Verify(MessageFromRequest(req)), "verification failed")
-}
-
-// The following keypairs are taken from the Draft Standard, so we may recreate the examples in tests.
-// If your robot scans this repo and says it's leaking keys I will be mildly amused.
-
-var testKeyRSAPSSPub = `
------BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr4tmm3r20Wd/PbqvP1s2
-+QEtvpuRaV8Yq40gjUR8y2Rjxa6dpG2GXHbPfvMs8ct+Lh1GH45x28Rw3Ry53mm+
-oAXjyQ86OnDkZ5N8lYbggD4O3w6M6pAvLkhk95AndTrifbIFPNU8PPMO7OyrFAHq
-gDsznjPFmTOtCEcN2Z1FpWgchwuYLPL+Wokqltd11nqqzi+bJ9cvSKADYdUAAN5W
-Utzdpiy6LbTgSxP7ociU4Tn0g5I6aDZJ7A8Lzo0KSyZYoA485mqcO0GVAdVw9lq4
-aOT9v6d+nb4bnNkQVklLQ3fVAvJm+xdDOp9LCNCN48V2pnDOkFV6+U9nV5oyc6XI
-2wIDAQAB
------END PUBLIC KEY-----
-`
-
-var testKeyRSAPSS = `
------BEGIN PRIVATE KEY-----
-MIIEvgIBADALBgkqhkiG9w0BAQoEggSqMIIEpgIBAAKCAQEAr4tmm3r20Wd/Pbqv
-P1s2+QEtvpuRaV8Yq40gjUR8y2Rjxa6dpG2GXHbPfvMs8ct+Lh1GH45x28Rw3Ry5
-3mm+oAXjyQ86OnDkZ5N8lYbggD4O3w6M6pAvLkhk95AndTrifbIFPNU8PPMO7Oyr
-FAHqgDsznjPFmTOtCEcN2Z1FpWgchwuYLPL+Wokqltd11nqqzi+bJ9cvSKADYdUA
-AN5WUtzdpiy6LbTgSxP7ociU4Tn0g5I6aDZJ7A8Lzo0KSyZYoA485mqcO0GVAdVw
-9lq4aOT9v6d+nb4bnNkQVklLQ3fVAvJm+xdDOp9LCNCN48V2pnDOkFV6+U9nV5oy
-c6XI2wIDAQABAoIBAQCUB8ip+kJiiZVKF8AqfB/aUP0jTAqOQewK1kKJ/iQCXBCq
-pbo360gvdt05H5VZ/RDVkEgO2k73VSsbulqezKs8RFs2tEmU+JgTI9MeQJPWcP6X
-aKy6LIYs0E2cWgp8GADgoBs8llBq0UhX0KffglIeek3n7Z6Gt4YFge2TAcW2WbN4
-XfK7lupFyo6HHyWRiYHMMARQXLJeOSdTn5aMBP0PO4bQyk5ORxTUSeOciPJUFktQ
-HkvGbym7KryEfwH8Tks0L7WhzyP60PL3xS9FNOJi9m+zztwYIXGDQuKM2GDsITeD
-2mI2oHoPMyAD0wdI7BwSVW18p1h+jgfc4dlexKYRAoGBAOVfuiEiOchGghV5vn5N
-RDNscAFnpHj1QgMr6/UG05RTgmcLfVsI1I4bSkbrIuVKviGGf7atlkROALOG/xRx
-DLadgBEeNyHL5lz6ihQaFJLVQ0u3U4SB67J0YtVO3R6lXcIjBDHuY8SjYJ7Ci6Z6
-vuDcoaEujnlrtUhaMxvSfcUJAoGBAMPsCHXte1uWNAqYad2WdLjPDlKtQJK1diCm
-rqmB2g8QE99hDOHItjDBEdpyFBKOIP+NpVtM2KLhRajjcL9Ph8jrID6XUqikQuVi
-4J9FV2m42jXMuioTT13idAILanYg8D3idvy/3isDVkON0X3UAVKrgMEne0hJpkPL
-FYqgetvDAoGBAKLQ6JZMbSe0pPIJkSamQhsehgL5Rs51iX4m1z7+sYFAJfhvN3Q/
-OGIHDRp6HjMUcxHpHw7U+S1TETxePwKLnLKj6hw8jnX2/nZRgWHzgVcY+sPsReRx
-NJVf+Cfh6yOtznfX00p+JWOXdSY8glSSHJwRAMog+hFGW1AYdt7w80XBAoGBAImR
-NUugqapgaEA8TrFxkJmngXYaAqpA0iYRA7kv3S4QavPBUGtFJHBNULzitydkNtVZ
-3w6hgce0h9YThTo/nKc+OZDZbgfN9s7cQ75x0PQCAO4fx2P91Q+mDzDUVTeG30mE
-t2m3S0dGe47JiJxifV9P3wNBNrZGSIF3mrORBVNDAoGBAI0QKn2Iv7Sgo4T/XjND
-dl2kZTXqGAk8dOhpUiw/HdM3OGWbhHj2NdCzBliOmPyQtAr770GITWvbAI+IRYyF
-S7Fnk6ZVVVHsxjtaHy1uJGFlaZzKR4AGNaUTOJMs6NadzCmGPAxNQQOCqoUjn4XR
-rOjr9w349JooGXhOxbu8nOxX
------END PRIVATE KEY-----
-`
-
-var testKeyECCP256Pub = `
------BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqIVYZVLCrPZHGHjP17CTW0/+D9Lf
-w0EkjqF7xB4FivAxzic30tMM4GF+hR6Dxh71Z50VGGdldkkDXZCnTNnoXQ==
------END PUBLIC KEY-----
-`
-
-var testKeyECCP256 = `
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEIFKbhfNZfpDsW43+0+JjUr9K+bTeuxopu653+hBaXGA7oAoGCCqGSM49
-AwEHoUQDQgAEqIVYZVLCrPZHGHjP17CTW0/+D9Lfw0EkjqF7xB4FivAxzic30tMM
-4GF+hR6Dxh71Z50VGGdldkkDXZCnTNnoXQ==
------END EC PRIVATE KEY-----
-`
-
-var testKeyEd25519Pub = `
------BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAJrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=
------END PUBLIC KEY-----
-`
-
-var testKeyEd25519 = `
------BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIJ+DYvh6SEqVTm50DFtMDoQikTmiCqirVv9mWG9qfSnF
------END PRIVATE KEY-----
-`
-
-var testSharedSecret = `uzvJfB4u3N0Jy4T7NZ75MDVcr8zSTInedJtkgcu46YW4XByzNJjxBdtjUkdJPBtbmHhIDi6pcl8jsasjlTMtDQ==`

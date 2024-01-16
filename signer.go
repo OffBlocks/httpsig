@@ -230,7 +230,12 @@ func (s *signer) Sign(msg *Message) (http.Header, error) {
 	}
 	input.Params = signingParameters
 
-	signatureBase = append(signatureBase, signatureItem{httpsfv.NewItem("@signature-params"), input})
+	marshalledInput, err := httpsfv.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+
+	signatureBase = append(signatureBase, signatureItem{httpsfv.NewItem("@signature-params"), []string{marshalledInput}})
 
 	base, err := formatSignatureBase(signatureBase)
 	if err != nil {

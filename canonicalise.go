@@ -33,11 +33,13 @@ package httpsig
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/dunglas/httpsfv"
@@ -100,7 +102,7 @@ func parseHeader(values []string) (httpsfv.StructuredFieldValue, error) {
 	return nil, errors.New("unable to parse structured header")
 }
 
-func canonicaliseComponent(component string, params *httpsfv.Params, message *Message) (httpsfv.StructuredFieldValue, error) {
+func canonicaliseComponent(component string, params *httpsfv.Params, message *Message) ([]string, error) {
 	_, isReq := params.Get("req")
 	switch component {
 	case "@method":
@@ -110,21 +112,36 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("method component not valid for responses")
 		}
-		return httpsfv.NewItem(strings.ToUpper(message.Method)), nil
+		return []string{strings.ToUpper(message.Method)}, nil
 	case "@target-uri":
 		// Section 2.2.2 covers canonicalisation of the target-uri.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-target-uri
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("target-uri component not valid for responses")
 		}
-		return httpsfv.NewItem(message.URL.String()), nil
+		return []string{message.URL.String()}, nil
 	case "@authority":
 		// Section 2.2.3 covers canonicalisation of the target-uri.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-authority
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("authority component not valid for responses")
 		}
-		return httpsfv.NewItem(message.Authority), nil
+		host, port, err := net.SplitHostPort(message.Authority)
+		if err != nil {
+			// no port, just use the whole thing
+			return []string{strings.ToLower(message.Authority)}, nil
+		}
+		switch strings.ToLower(message.URL.Scheme) {
+		case "http":
+			if port == "80" {
+				return []string{strings.ToLower(host)}, nil
+			}
+		case "https":
+			if port == "443" {
+				return []string{strings.ToLower(host)}, nil
+			}
+		}
+		return []string{strings.ToLower(message.Authority)}, nil
 	case "@scheme":
 		// Section 2.2.4 covers canonicalisation of the scheme.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-scheme
@@ -132,14 +149,14 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("scheme component not valid for responses")
 		}
-		return httpsfv.NewItem(strings.ToLower(message.URL.Scheme)), nil
+		return []string{strings.ToLower(message.URL.Scheme)}, nil
 	case "@request-target":
 		// Section 2.2.5 covers canonicalisation of the request-target.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-request-target
 		if !message.IsRequest && !isReq {
 			return nil, errors.New("request-target component not valid for responses")
 		}
-		return httpsfv.NewItem(message.URL.RequestURI()), nil
+		return []string{message.URL.RequestURI()}, nil
 	case "@path":
 		// Section 2.2.6 covers canonicalisation of the path.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-path
@@ -147,11 +164,11 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 			return nil, errors.New("path component not valid for responses")
 		}
 		// empty path means use `/`
-		path := message.URL.Path
+		path := message.URL.EscapedPath()
 		if path == "" || path[0] != '/' {
 			path = "/" + path
 		}
-		return httpsfv.NewItem(path), nil
+		return []string{path}, nil
 	case "@query":
 		// Section 2.2.7 covers canonicalisation of the query.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-query
@@ -159,7 +176,7 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 			return nil, errors.New("query component not valid for responses")
 		}
 		// absent query params means use `?`
-		return httpsfv.NewItem("?" + message.URL.RawQuery), nil
+		return []string{"?" + message.URL.RawQuery}, nil
 	case "@query-param":
 		// Section 2.2.8 covers canonicalisation of the query-param.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-query-parameters
@@ -173,7 +190,7 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !ok {
 			return nil, errors.New("query-param must have a named parameter")
 		}
-		decodedName, err := url.QueryUnescape(name.(string))
+		decodedName, err := url.PathUnescape(name.(string))
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode query parameter name: %w", err)
 		}
@@ -181,28 +198,35 @@ func canonicaliseComponent(component string, params *httpsfv.Params, message *Me
 		if !query.Has(decodedName) {
 			return nil, fmt.Errorf("expected query parameter \"%s\" not found", name)
 		}
-		decodedValue, err := url.QueryUnescape(query.Get(decodedName))
-		if err != nil {
-			return nil, fmt.Errorf("unable to decode query parameter value: %w", err)
+		var values []string
+		for _, v := range query[decodedName] {
+			decodedValue, err := url.PathUnescape(v)
+			if err != nil {
+				return nil, fmt.Errorf("unable to decode query parameter value: %w", err)
+			}
+			values = append(values, url.PathEscape(decodedValue))
 		}
-		return httpsfv.NewItem(url.QueryEscape(decodedValue)), nil
+		return values, nil
 	case "@status":
 		// Section 2.2.9 covers canonicalisation of the status.
 		// https://www.ietf.org/archive/id/draft-ietf-httpbis-message-signatures-19.html#name-status-code
-		if message.IsRequest && isReq {
+		if message.IsRequest || (!message.IsRequest && isReq) {
 			return nil, errors.New("status component not valid for requests")
 		}
-		return httpsfv.NewItem(message.StatusCode), nil
+		return []string{strconv.Itoa(message.StatusCode)}, nil
 	default:
 		return nil, fmt.Errorf("unknown component: %s", component)
 	}
 }
 
-func canonicaliseHeader(header string, params *httpsfv.Params, message *Message) (httpsfv.StructuredFieldValue, error) {
+func canonicaliseHeader(header string, params *httpsfv.Params, message *Message) ([]string, error) {
 	var v []string
 	if _, isReq := params.Get("req"); isReq {
 		if message.IsRequest {
 			return nil, errors.New("req parameter not valid for requests")
+		}
+		if message.RequestHeader == nil {
+			return nil, errors.New("req parameter requires a request header")
 		}
 		v = message.RequestHeader.Values(header)
 	} else {
@@ -242,29 +266,51 @@ func canonicaliseHeader(header string, params *httpsfv.Params, message *Message)
 			if !ok {
 				return nil, fmt.Errorf("unable to find key \"%s\" in structured field", key)
 			}
-			return val, nil
+
+			marshalled, err := httpsfv.Marshal(val)
+			if err != nil {
+				return nil, err
+			}
+
+			return []string{marshalled}, nil
 		}
-		return parsed, nil
+
+		marshalled, err := httpsfv.Marshal(parsed)
+		if err != nil {
+			return nil, err
+		}
+
+		return []string{marshalled}, nil
 	}
 
 	if isBs {
-		encoded := httpsfv.List{}
-		for _, sv := range v {
-			decoded, err := base64.StdEncoding.DecodeString(sv)
-			if err != nil {
-				return nil, fmt.Errorf("unable to decode base64 value %s: %w", sv, err)
+		encoded := make([]string, len(v))
+		for i, sv := range v {
+			regex := regexp.MustCompile(`\s+`)
+			values := strings.Split(sv, ",")
+			for j, v := range values {
+				values[j] = regex.ReplaceAllString(strings.TrimSpace(v), " ")
 			}
-			enc := base64.StdEncoding.EncodeToString([]byte(strings.TrimSpace(string(decoded))))
-			item := httpsfv.NewItem([]byte(enc))
-			encoded = append(encoded, item)
+			item := httpsfv.NewItem([]byte(strings.Join(values, ", ")))
+			marshalled, err := httpsfv.Marshal(item)
+			if err != nil {
+				return nil, err
+			}
+			encoded[i] = marshalled
 		}
+
 		return encoded, nil
 	}
 
 	// raw encoding
-	encoded := httpsfv.List{}
-	for _, sv := range v {
-		encoded = append(encoded, httpsfv.NewItem(strings.TrimSpace(sv)))
+	encoded := make([]string, len(v))
+	regex := regexp.MustCompile(`\s+`)
+	for i, sv := range v {
+		values := strings.Split(sv, ",")
+		for j, v := range values {
+			values[j] = regex.ReplaceAllString(strings.TrimSpace(v), " ")
+		}
+		encoded[i] = strings.Join(values, ", ")
 	}
 	return encoded, nil
 }
@@ -284,15 +330,6 @@ func quoteString(input string) string {
 	return input
 }
 
-func unquoteString(input string) string {
-	// if it's quoted, attempt to unquote
-	bytes := []byte(input)
-	if len(bytes) > 2 && bytes[0] == '"' && bytes[len(bytes)-1] == '"' {
-		bytes = bytes[1 : len(bytes)-1]
-	}
-	return string(bytes)
-}
-
 func formatSignatureBase(items []signatureItem) (string, error) {
 	var b strings.Builder
 
@@ -302,16 +339,13 @@ func formatSignatureBase(items []signatureItem) (string, error) {
 			return "", err
 		}
 
-		marshalledValue, err := httpsfv.Marshal(item.value)
-		if err != nil {
-			return "", err
-		}
+		value := strings.Join(item.value, ", ")
 
-		_, err = b.WriteString(fmt.Sprintf("%s: %s\n", marshalledKey, unquoteString(marshalledValue)))
+		_, err = b.WriteString(fmt.Sprintf("%s: %s\n", marshalledKey, value))
 		if err != nil {
 			return "", err
 		}
 	}
 
-	return strings.TrimSpace(b.String()), nil
+	return strings.TrimRight(b.String(), "\n"), nil
 }

@@ -43,7 +43,7 @@ import (
 
 type signatureItem struct {
 	key   httpsfv.Item
-	value httpsfv.StructuredFieldValue
+	value []string
 }
 
 func createSigningParameters(config *SignConfig) *httpsfv.Params {
@@ -228,7 +228,7 @@ func createSignatureBase(fields []string, msg *Message) ([]signatureItem, error)
 		lcName := strings.ToLower(field.Value.(string))
 
 		if lcName != "@signature-params" {
-			var value httpsfv.StructuredFieldValue
+			var value []string
 			if strings.HasPrefix(lcName, "@") {
 				value, err = canonicaliseComponent(lcName, params, msg)
 			} else {
