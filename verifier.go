@@ -41,7 +41,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"errors"
-	"log"
 	"math/big"
 	"slices"
 	"time"
@@ -285,8 +284,6 @@ func (v *verifier) Verify(msg *Message) error {
 		if err != nil {
 			return err
 		}
-
-		log.Println("base:", base)
 
 		err = key.Verify([]byte(base), signatureBytes)
 		if err != nil {
